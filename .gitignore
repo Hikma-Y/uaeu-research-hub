@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+backend/.env
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.log
+
+# Local editor / OS files
+.vscode/
+.DS_Store
+# Never commit local environment files
+.env.local
+.env.production
