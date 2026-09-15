@@ -496,6 +496,39 @@ export default function App() {
     profile
   ) {
     if (
+      profile.account_status === 'suspended'
+    ) {
+      return (
+        <main className="page-shell">
+          <div
+            style={{
+              minHeight: '100vh',
+              display: 'grid',
+              placeItems: 'center',
+              padding: '24px',
+              textAlign: 'center',
+            }}
+          >
+            <div>
+              <h2>Account suspended</h2>
+              <p>
+                Your UAEU Research Hub account has been suspended.
+                Contact a research administrator if you believe this is an error.
+              </p>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={handleSignOut}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </main>
+      )
+    }
+
+    if (
       profile.role === 'admin'
     ) {
       return (
