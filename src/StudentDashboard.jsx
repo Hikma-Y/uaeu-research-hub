@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Download,
   Eye,
+  ExternalLink,
   FileText,
   FlaskConical,
   FolderKanban,
@@ -19,6 +20,7 @@ import {
   MoreHorizontal,
   Paperclip,
   Pencil,
+  Plus,
   Search,
   Save,
   Send,
@@ -729,6 +731,14 @@ function Profile({
   const createDraft = (
     sourceProfile
   ) => ({
+    full_name: sourceProfile?.full_name || '',
+    headline: sourceProfile?.headline || '',
+    bio: sourceProfile?.bio || '',
+    major: sourceProfile?.major || '',
+    year_of_study: sourceProfile?.year_of_study || '',
+    gpa: sourceProfile?.gpa ?? '',
+    expected_graduation_year:
+      sourceProfile?.expected_graduation_year ?? '',
     research_experience:
       sourceProfile?.research_experience || '',
 
@@ -744,6 +754,51 @@ function Profile({
       )
         ? sourceProfile.research_interests.join(', ')
         : '',
+    relevant_coursework: Array.isArray(
+      sourceProfile?.relevant_coursework
+    )
+      ? sourceProfile.relevant_coursework.join(', ')
+      : '',
+    languages: Array.isArray(sourceProfile?.languages)
+      ? sourceProfile.languages.join(', ')
+      : '',
+    achievement_entries: Array.isArray(
+      sourceProfile?.achievement_entries
+    )
+      ? sourceProfile.achievement_entries
+      : Array.isArray(sourceProfile?.achievements)
+        ? sourceProfile.achievements.map((title) => ({
+            title, issuer: '', date: '', description: '', link: '',
+          }))
+        : [],
+    linkedin_url: sourceProfile?.linkedin_url || '',
+    github_url: sourceProfile?.github_url || '',
+    portfolio_url: sourceProfile?.portfolio_url || '',
+    student_projects: Array.isArray(
+      sourceProfile?.student_projects
+    )
+      ? sourceProfile.student_projects
+      : [],
+    has_research_experience:
+      sourceProfile?.has_research_experience ??
+      Boolean(
+        sourceProfile?.experience_entries?.length ||
+        sourceProfile?.research_experience
+      ),
+    experience_entries: Array.isArray(
+      sourceProfile?.experience_entries
+    )
+      ? sourceProfile.experience_entries
+      : sourceProfile?.research_experience
+        ? [{
+            title: 'Research experience',
+            organization: '',
+            type: 'Research',
+            start_date: '',
+            end_date: '',
+            description: sourceProfile.research_experience,
+          }]
+        : [],
   })
 
   const [draft, setDraft] =
@@ -814,6 +869,110 @@ function Profile({
     setIsEditing(false)
   }
 
+  function parseList(value) {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  function updateProject(index, field, value) {
+    setDraft((current) => ({
+      ...current,
+      student_projects: current.student_projects.map(
+        (project, projectIndex) =>
+          projectIndex === index
+            ? { ...project, [field]: value }
+            : project
+      ),
+    }))
+  }
+
+  function addProject() {
+    setDraft((current) => ({
+      ...current,
+      student_projects: [
+        ...current.student_projects,
+        { title: '', role: '', description: '', link: '' },
+      ],
+    }))
+  }
+
+  function removeProject(index) {
+    setDraft((current) => ({
+      ...current,
+      student_projects: current.student_projects.filter(
+        (_project, projectIndex) => projectIndex !== index
+      ),
+    }))
+  }
+
+  function addAchievement() {
+    setDraft((current) => ({
+      ...current,
+      achievement_entries: [
+        ...current.achievement_entries,
+        { title: '', issuer: '', date: '', description: '', link: '' },
+      ],
+    }))
+  }
+
+  function updateAchievement(index, field, value) {
+    setDraft((current) => ({
+      ...current,
+      achievement_entries: current.achievement_entries.map(
+        (entry, entryIndex) =>
+          entryIndex === index ? { ...entry, [field]: value } : entry
+      ),
+    }))
+  }
+
+  function removeAchievement(index) {
+    setDraft((current) => ({
+      ...current,
+      achievement_entries: current.achievement_entries.filter(
+        (_entry, entryIndex) => entryIndex !== index
+      ),
+    }))
+  }
+
+  function addExperience() {
+    setDraft((current) => ({
+      ...current,
+      has_research_experience: true,
+      experience_entries: [
+        ...current.experience_entries,
+        {
+          title: '', organization: '', type: 'Research',
+          start_date: '', end_date: '', description: '',
+        },
+      ],
+    }))
+  }
+
+  function updateExperience(index, field, value) {
+    setDraft((current) => ({
+      ...current,
+      experience_entries: current.experience_entries.map(
+        (entry, entryIndex) =>
+          entryIndex === index ? { ...entry, [field]: value } : entry
+      ),
+    }))
+  }
+
+  function removeExperience(index) {
+    setDraft((current) => {
+      const entries = current.experience_entries.filter(
+        (_entry, entryIndex) => entryIndex !== index
+      )
+      return {
+        ...current,
+        experience_entries: entries,
+        has_research_experience: entries.length > 0,
+      }
+    })
+  }
+
   async function saveProfile() {
     if (!profile?.id) {
       setSaveError(
@@ -826,25 +985,112 @@ function Profile({
     setSaveError('')
     setSaveSuccess(false)
 
-    const skills = draft.skills
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean)
+    if (!draft.full_name.trim()) {
+      setSaveError('Student name is required.')
+      setIsSaving(false)
+      return
+    }
 
-    const researchInterests =
-      draft.research_interests
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean)
+    const gpa = draft.gpa === '' ? null : Number(draft.gpa)
+    const graduationYear =
+      draft.expected_graduation_year === ''
+        ? null
+        : Number(draft.expected_graduation_year)
+
+    if (gpa !== null && (Number.isNaN(gpa) || gpa < 0 || gpa > 4)) {
+      setSaveError('GPA must be a number between 0.00 and 4.00.')
+      setIsSaving(false)
+      return
+    }
+
+    if (
+      graduationYear !== null &&
+      (!Number.isInteger(graduationYear) ||
+        graduationYear < 2026 ||
+        graduationYear > 2100)
+    ) {
+      setSaveError('Expected graduation year must be between 2026 and 2100.')
+      setIsSaving(false)
+      return
+    }
+
+    const urlFields = [
+      ['LinkedIn', draft.linkedin_url],
+      ['GitHub', draft.github_url],
+      ['Portfolio', draft.portfolio_url],
+      ...draft.student_projects.map((project, index) => [
+        `Project ${index + 1} link`,
+        project.link || '',
+      ]),
+      ...draft.achievement_entries.map((entry, index) => [
+        `Achievement ${index + 1} link`,
+        entry.link || '',
+      ]),
+    ]
+
+    const invalidUrl = urlFields.find(([, value]) => {
+      if (!value.trim()) return false
+      try {
+        const url = new URL(value)
+        return !['http:', 'https:'].includes(url.protocol)
+      } catch {
+        return true
+      }
+    })
+
+    if (invalidUrl) {
+      setSaveError(`${invalidUrl[0]} must be a complete web address.`)
+      setIsSaving(false)
+      return
+    }
 
     const updates = {
+      full_name: draft.full_name.trim(),
+      headline: draft.headline.trim(),
+      bio: draft.bio.trim(),
+      major: draft.major.trim(),
+      year_of_study: draft.year_of_study.trim(),
+      gpa,
+      expected_graduation_year: graduationYear,
       research_experience:
         draft.research_experience.trim(),
-
-      skills,
-
-      research_interests:
-        researchInterests,
+      skills: parseList(draft.skills),
+      research_interests: parseList(draft.research_interests),
+      relevant_coursework: parseList(draft.relevant_coursework),
+      languages: parseList(draft.languages),
+      linkedin_url: draft.linkedin_url.trim(),
+      github_url: draft.github_url.trim(),
+      portfolio_url: draft.portfolio_url.trim(),
+      student_projects: draft.student_projects
+        .map((project) => ({
+          title: project.title?.trim() || '',
+          role: project.role?.trim() || '',
+          description: project.description?.trim() || '',
+          link: project.link?.trim() || '',
+        }))
+        .filter((project) => project.title),
+      has_research_experience: draft.has_research_experience,
+      experience_entries: draft.has_research_experience
+        ? draft.experience_entries
+            .map((entry) => ({
+              title: entry.title?.trim() || '',
+              organization: entry.organization?.trim() || '',
+              type: entry.type || 'Research',
+              start_date: entry.start_date || '',
+              end_date: entry.end_date || '',
+              description: entry.description?.trim() || '',
+            }))
+            .filter((entry) => entry.title)
+        : [],
+      achievement_entries: draft.achievement_entries
+        .map((entry) => ({
+          title: entry.title?.trim() || '',
+          issuer: entry.issuer?.trim() || '',
+          date: entry.date || '',
+          description: entry.description?.trim() || '',
+          link: entry.link?.trim() || '',
+        }))
+        .filter((entry) => entry.title),
 
       updated_at:
         new Date().toISOString(),
@@ -1096,8 +1342,27 @@ function Profile({
     profile?.full_name
   )
 
+  const completionChecks = [
+    profile?.headline,
+    profile?.major,
+    profile?.year_of_study,
+    profile?.bio,
+    profile?.has_research_experience
+      ? profile?.experience_entries?.length
+      : true,
+    profile?.skills?.length,
+    profile?.research_interests?.length,
+    profile?.student_projects?.length,
+    profile?.linkedin_url || profile?.github_url,
+    documents.length,
+  ]
+  const completion = Math.round(
+    (completionChecks.filter(Boolean).length /
+      completionChecks.length) * 100
+  )
+
   return (
-    <div className="dashboard-section two-column-layout">
+    <div className="dashboard-section profile-page-layout">
       <section className="content-card profile-card">
         <SectionHeading
           eyebrow="Personal details"
@@ -1162,29 +1427,93 @@ function Profile({
           </span>
 
           <div>
-            <h3>
-              {profile?.full_name || 'Student'}
-            </h3>
+            {isEditing ? (
+              <label className="profile-name-field">
+                Student name
+                <input
+                  value={draft.full_name}
+                  onChange={(event) =>
+                    setDraft({ ...draft, full_name: event.target.value })
+                  }
+                />
+              </label>
+            ) : (
+              <h3>{profile?.full_name || 'Student'}</h3>
+            )}
 
-            <p>
-              {profile?.major || 'Major not specified'}
-              {' · '}
-              {profile?.year_of_study || 'Year not specified'}
+            <p className="profile-headline">
+              {profile?.headline ||
+                'Add a headline that introduces your research interests'}
             </p>
 
             <span>
-              University ID:{' '}
-              {profile?.university_id || 'Not available'}
+              {profile?.major || 'Major not specified'}
+              {' · '}
+              {profile?.year_of_study || 'Year not specified'}
             </span>
+
+            {!isEditing && (
+              <div className="profile-intro-links">
+                {[
+                  ['LinkedIn', profile?.linkedin_url],
+                  ['GitHub', profile?.github_url],
+                  ['Portfolio', profile?.portfolio_url],
+                ].filter(([, url]) => url).map(([label, url]) => (
+                  <a key={label} href={url} target="_blank" rel="noreferrer">
+                    {label} <ExternalLink size={12} />
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        <div className="profile-progress">
-          <span
-            style={{ width: '85%' }}
-          />
+        <div className="profile-completion-row">
+          <span>Profile completion</span>
+          <strong>{completion}%</strong>
+        </div>
+        <div
+          className="profile-progress"
+          role="progressbar"
+          aria-valuenow={completion}
+          aria-valuemin="0"
+          aria-valuemax="100"
+        >
+          <span style={{ width: `${completion}%` }} />
         </div>
 
+        <h4 className="profile-section-title">About</h4>
+        {isEditing ? (
+          <div className="profile-fields">
+            <label>
+              Headline
+              <input
+                value={draft.headline}
+                placeholder="Computer Science student interested in AI and healthcare"
+                onChange={(event) =>
+                  setDraft({ ...draft, headline: event.target.value })
+                }
+              />
+            </label>
+
+            <label>
+              About me
+              <textarea
+                value={draft.bio}
+                placeholder="Introduce your academic background and interests"
+                onChange={(event) =>
+                  setDraft({ ...draft, bio: event.target.value })
+                }
+              />
+            </label>
+          </div>
+        ) : (
+          <div className="profile-about-copy">
+            {profile?.bio || 'No introduction added yet.'}
+          </div>
+        )}
+
+        <h4 className="profile-section-title">Academic details</h4>
         <div className="profile-fields">
           <label>
             UAEU email
@@ -1196,56 +1525,85 @@ function Profile({
           </label>
 
           <label>
-            Department
+            University ID
 
             <input
-              value={profile?.department || ''}
+              value={profile?.university_id || ''}
               readOnly
             />
           </label>
 
           <label>
-            Research experience
+            Department
 
-            <textarea
+            <input value={profile?.department || ''} readOnly />
+          </label>
+        </div>
+
+        <div className="profile-fields profile-fields--two-column academic-detail-fields">
+          <label>
+            Major
+            <input
+              value={isEditing ? draft.major : profile?.major || ''}
+              readOnly={!isEditing}
+              onChange={(event) =>
+                setDraft({ ...draft, major: event.target.value })
+              }
+            />
+          </label>
+
+          <label>
+            Year of study
+            <input
+              value={isEditing ? draft.year_of_study : profile?.year_of_study || ''}
+              readOnly={!isEditing}
+              placeholder="For example, Year 3"
+              onChange={(event) =>
+                setDraft({ ...draft, year_of_study: event.target.value })
+              }
+            />
+          </label>
+
+          <label>
+            GPA
+            <input
+              type="number"
+              min="0"
+              max="4"
+              step="0.01"
+              value={isEditing ? draft.gpa : profile?.gpa ?? ''}
+              readOnly={!isEditing}
+              onChange={(event) =>
+                setDraft({ ...draft, gpa: event.target.value })
+              }
+            />
+          </label>
+
+          <label>
+            Expected graduation year
+            <input
+              type="number"
+              min="2026"
+              max="2100"
               value={
                 isEditing
-                  ? draft.research_experience
-                  : profile?.research_experience || ''
+                  ? draft.expected_graduation_year
+                  : profile?.expected_graduation_year ?? ''
               }
               readOnly={!isEditing}
               onChange={(event) =>
                 setDraft({
                   ...draft,
-                  research_experience:
-                    event.target.value,
+                  expected_graduation_year: event.target.value,
                 })
               }
             />
           </label>
         </div>
 
+        <h4 className="profile-section-title">Research profile</h4>
         {isEditing ? (
           <div className="editable-tag-fields">
-            <label>
-              Skills
-
-              <span>
-                Separate items with commas
-              </span>
-
-              <textarea
-                value={draft.skills}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    skills:
-                      event.target.value,
-                  })
-                }
-              />
-            </label>
-
             <label>
               Research interests
 
@@ -1266,48 +1624,414 @@ function Profile({
                 }
               />
             </label>
+
           </div>
         ) : (
+          <div className="profile-tag-groups">
+            {[
+              ['Research interests', profile?.research_interests],
+            ].map(([label, items]) => (
+              <div key={label}>
+                <h5>{label}</h5>
+                <div className="tag-list tag-list--large">
+                  {items?.length
+                    ? items.map((item) => <span key={item}>{item}</span>)
+                    : <span>Nothing added yet</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="profile-section-heading">
+          <h5 className="profile-subsection-title">Experience</h5>
+          {isEditing && draft.has_research_experience && (
+            <button className="text-button" type="button" onClick={addExperience}>
+              <Plus size={15} /> Add experience
+            </button>
+          )}
+        </div>
+
+        {isEditing && (
+          <fieldset className="experience-question">
+            <legend>Do you have any research or related experience?</legend>
+            <label>
+              <input
+                type="radio"
+                name="has-research-experience"
+                checked={draft.has_research_experience}
+                onChange={() =>
+                  setDraft({ ...draft, has_research_experience: true })
+                }
+              />
+              Yes
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="has-research-experience"
+                checked={!draft.has_research_experience}
+                onChange={() =>
+                  setDraft({
+                    ...draft,
+                    has_research_experience: false,
+                    experience_entries: [],
+                  })
+                }
+              />
+              No
+            </label>
+          </fieldset>
+        )}
+
+        <div className="profile-projects">
+          {(isEditing
+            ? draft.has_research_experience
+              ? draft.experience_entries
+              : []
+            : profile?.has_research_experience
+              ? profile?.experience_entries || []
+              : []
+          ).map((entry, index) => (
+            <article className="profile-project" key={`${entry.title}-${index}`}>
+              {isEditing ? (
+                <>
+                  <div className="profile-fields profile-fields--two-column">
+                    <label>
+                      Experience title
+                      <input
+                        value={entry.title || ''}
+                        onChange={(event) =>
+                          updateExperience(index, 'title', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Organization or faculty
+                      <input
+                        value={entry.organization || ''}
+                        onChange={(event) =>
+                          updateExperience(index, 'organization', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Experience type
+                      <select
+                        value={entry.type || 'Research'}
+                        onChange={(event) =>
+                          updateExperience(index, 'type', event.target.value)
+                        }
+                      >
+                        <option>Research</option>
+                        <option>Internship</option>
+                        <option>Volunteering</option>
+                        <option>Other</option>
+                      </select>
+                    </label>
+                    <label>
+                      Start date
+                      <input
+                        type="month"
+                        value={entry.start_date || ''}
+                        onChange={(event) =>
+                          updateExperience(index, 'start_date', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      End date
+                      <input
+                        type="month"
+                        value={entry.end_date || ''}
+                        onChange={(event) =>
+                          updateExperience(index, 'end_date', event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="project-description-field">
+                    Description
+                    <textarea
+                      value={entry.description || ''}
+                      onChange={(event) =>
+                        updateExperience(index, 'description', event.target.value)
+                      }
+                    />
+                  </label>
+                  <button
+                    className="remove-project-button"
+                    type="button"
+                    onClick={() => removeExperience(index)}
+                  >
+                    <Trash2 size={14} /> Remove experience
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h5>{entry.title}</h5>
+                  <span>
+                    {[entry.organization, entry.type].filter(Boolean).join(' · ')}
+                  </span>
+                  {(entry.start_date || entry.end_date) && (
+                    <small>{entry.start_date || 'Start'} – {entry.end_date || 'Present'}</small>
+                  )}
+                  {entry.description && <p>{entry.description}</p>}
+                </>
+              )}
+            </article>
+          ))}
+          {isEditing && draft.has_research_experience && !draft.experience_entries.length && (
+            <button className="empty-add-button" type="button" onClick={addExperience}>
+              <Plus size={17} /> Add your first experience
+            </button>
+          )}
+          {!isEditing && !profile?.has_research_experience && (
+            <p className="profile-empty-copy">No research experience added.</p>
+          )}
+        </div>
+
+        <div className="profile-section-heading">
+          <h4 className="profile-section-title">Projects</h4>
+          {isEditing && (
+            <button className="text-button" type="button" onClick={addProject}>
+              <Plus size={15} /> Add project
+            </button>
+          )}
+        </div>
+
+        <div className="profile-projects">
+          {(isEditing ? draft.student_projects : profile?.student_projects || [])
+            .map((project, index) => (
+              <article className="profile-project" key={`${project.title}-${index}`}>
+                {isEditing ? (
+                  <>
+                    <div className="profile-fields profile-fields--two-column">
+                      <label>
+                        Project title
+                        <input
+                          value={project.title || ''}
+                          onChange={(event) => updateProject(index, 'title', event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Your role
+                        <input
+                          value={project.role || ''}
+                          onChange={(event) => updateProject(index, 'role', event.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <label className="project-description-field">
+                      Description
+                      <textarea
+                        value={project.description || ''}
+                        onChange={(event) => updateProject(index, 'description', event.target.value)}
+                      />
+                    </label>
+                    <label className="project-link-field">
+                      Project link
+                      <input
+                        type="url"
+                        value={project.link || ''}
+                        placeholder="https://..."
+                        onChange={(event) => updateProject(index, 'link', event.target.value)}
+                      />
+                    </label>
+                    <button
+                      className="remove-project-button"
+                      type="button"
+                      onClick={() => removeProject(index)}
+                    >
+                      <Trash2 size={14} /> Remove project
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h5>{project.title}</h5>
+                    {project.role && <span>{project.role}</span>}
+                    {project.description && <p>{project.description}</p>}
+                    {project.link && (
+                      <a href={project.link} target="_blank" rel="noreferrer">
+                        View project <ExternalLink size={13} />
+                      </a>
+                    )}
+                  </>
+                )}
+              </article>
+            ))}
+          {!isEditing && !profile?.student_projects?.length && (
+            <p className="profile-empty-copy">No projects added yet.</p>
+          )}
+          {isEditing && !draft.student_projects.length && (
+            <button className="empty-add-button" type="button" onClick={addProject}>
+              <Plus size={17} /> Add your first project
+            </button>
+          )}
+        </div>
+
+        <h4 className="profile-section-title">Skills and languages</h4>
+        {isEditing ? (
+          <div className="editable-tag-fields">
+            {[
+              ['Technical and soft skills', 'skills'],
+              ['Relevant coursework', 'relevant_coursework'],
+              ['Languages', 'languages'],
+            ].map(([label, field]) => (
+              <label key={field}>
+                {label}
+                <span>Separate items with commas</span>
+                <textarea
+                  value={draft[field]}
+                  onChange={(event) =>
+                    setDraft({ ...draft, [field]: event.target.value })
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div className="profile-tag-groups">
+            {[
+              ['Skills', profile?.skills],
+              ['Relevant coursework', profile?.relevant_coursework],
+              ['Languages', profile?.languages],
+            ].map(([label, items]) => (
+              <div key={label}>
+                <h5>{label}</h5>
+                <div className="tag-list tag-list--large">
+                  {items?.length
+                    ? items.map((item) => <span key={item}>{item}</span>)
+                    : <span>Nothing added yet</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="profile-section-heading">
+          <h4 className="profile-section-title">Achievements</h4>
+          {isEditing && (
+            <button className="text-button" type="button" onClick={addAchievement}>
+              <Plus size={15} /> Add achievement
+            </button>
+          )}
+        </div>
+
+        <div className="profile-projects">
+          {(isEditing
+            ? draft.achievement_entries
+            : profile?.achievement_entries || []
+          ).map((entry, index) => (
+            <article className="profile-project" key={`${entry.title}-${index}`}>
+              {isEditing ? (
+                <>
+                  <div className="profile-fields profile-fields--two-column">
+                    <label>
+                      Achievement title
+                      <input
+                        value={entry.title || ''}
+                        placeholder="Award or certification name"
+                        onChange={(event) =>
+                          updateAchievement(index, 'title', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Issuer or organization
+                      <input
+                        value={entry.issuer || ''}
+                        onChange={(event) =>
+                          updateAchievement(index, 'issuer', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Date received
+                      <input
+                        type="month"
+                        value={entry.date || ''}
+                        onChange={(event) =>
+                          updateAchievement(index, 'date', event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Credential link
+                      <input
+                        type="url"
+                        value={entry.link || ''}
+                        placeholder="https://..."
+                        onChange={(event) =>
+                          updateAchievement(index, 'link', event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="project-description-field">
+                    Description
+                    <textarea
+                      value={entry.description || ''}
+                      onChange={(event) =>
+                        updateAchievement(index, 'description', event.target.value)
+                      }
+                    />
+                  </label>
+                  <button
+                    className="remove-project-button"
+                    type="button"
+                    onClick={() => removeAchievement(index)}
+                  >
+                    <Trash2 size={14} /> Remove achievement
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h5>{entry.title}</h5>
+                  {entry.issuer && <span>{entry.issuer}</span>}
+                  {entry.date && <small>{entry.date}</small>}
+                  {entry.description && <p>{entry.description}</p>}
+                  {entry.link && (
+                    <a href={entry.link} target="_blank" rel="noreferrer">
+                      View credential <ExternalLink size={13} />
+                    </a>
+                  )}
+                </>
+              )}
+            </article>
+          ))}
+          {!isEditing && !profile?.achievement_entries?.length && (
+            <p className="profile-empty-copy">No achievements added yet.</p>
+          )}
+          {isEditing && !draft.achievement_entries.length && (
+            <button className="empty-add-button" type="button" onClick={addAchievement}>
+              <Plus size={17} /> Add your first achievement
+            </button>
+          )}
+        </div>
+
+        {isEditing && (
           <>
-            <h4>Skills</h4>
-
-            <div className="tag-list tag-list--large">
-              {profile?.skills?.length ? (
-                profile.skills.map(
-                  (item) => (
-                    <span key={item}>
-                      {item}
-                    </span>
-                  )
-                )
-              ) : (
-                <span>
-                  No skills added
-                </span>
-              )}
-            </div>
-
-            <h4>
-              Research interests
-            </h4>
-
-            <div className="tag-list tag-list--large">
-              {profile
-                ?.research_interests
-                ?.length ? (
-                profile.research_interests.map(
-                  (item) => (
-                    <span key={item}>
-                      {item}
-                    </span>
-                  )
-                )
-              ) : (
-                <span>
-                  No research interests added
-                </span>
-              )}
-            </div>
+          <h4 className="profile-section-title">Professional links</h4>
+          <div className="profile-fields">
+            {[
+              ['LinkedIn', 'linkedin_url'],
+              ['GitHub', 'github_url'],
+              ['Portfolio website', 'portfolio_url'],
+            ].map(([label, field]) => (
+              <label key={field}>
+                {label}
+                <input
+                  type="url"
+                  value={draft[field]}
+                  placeholder="https://..."
+                  onChange={(event) =>
+                    setDraft({ ...draft, [field]: event.target.value })
+                  }
+                />
+              </label>
+            ))}
+          </div>
           </>
         )}
       </section>
