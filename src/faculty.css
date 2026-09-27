@@ -795,3 +795,19 @@
 @media (max-width: 700px) {
   .candidate-profile-details { grid-template-columns: 1fr; }
 }
+
+.orcid-import { margin: 22px 0; padding: 20px; border: 1px solid #ddd5c5; border-radius: 14px; background: #faf8f3; color: #263447; }
+.orcid-import h3, .orcid-import h4 { margin: 0 0 10px; }
+.orcid-import p { line-height: 1.6; overflow-wrap: anywhere; }
+.orcid-import__form > label { display: block; font-weight: 600; margin-bottom: 8px; }
+.orcid-import__input-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.orcid-import__input-row input { flex: 1 1 240px; min-width: 0; border: 1px solid #c9cdd3; border-radius: 8px; padding: 12px; font: inherit; background: white; }
+.orcid-import__preview { margin-top: 20px; }
+.orcid-import__preview a { overflow-wrap: anywhere; color: #265e84; }
+.orcid-import__field { padding: 14px 0; border-top: 1px solid #ddd5c5; }
+.orcid-import__field p { white-space: pre-wrap; max-height: 210px; overflow-y: auto; }
+.orcid-import__check { display: flex; gap: 10px; align-items: flex-start; font-weight: 600; margin: 10px 0; }
+.orcid-import__check input { flex: 0 0 auto; margin-top: 4px; }
+.orcid-import__save-note { display: block; margin-top: 10px; }
+.orcid-import button:disabled { opacity: .55; cursor: not-allowed; }
+.orcid-import :focus-visible { outline: 3px solid #477fba; outline-offset: 3px; }

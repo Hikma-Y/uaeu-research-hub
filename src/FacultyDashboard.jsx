@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import OrcidImport from './OrcidImport'
+import { applyOrcidSelection } from './lib/orcid'
 import {
   BarChart3,
   Bell,
@@ -739,13 +741,19 @@ function FacultyProfile({
           </div>
         </div>
 
+        {editing && !saving && <OrcidImport draft={draft} onApply={(record, selected) => {
+          setDraft(current => applyOrcidSelection(current, record, selected))
+          setMessage('ORCID information added to the form. Review it, then click Save.')
+          setErrorMessage('')
+        }} />}
+
         <div className="faculty-profile-fields">
           <label>
             Research biography
 
             <textarea
               value={draft.bio}
-              readOnly={!editing}
+              readOnly={!editing || saving}
               onChange={(event) =>
                 setDraft({
                   ...draft,
@@ -764,7 +772,7 @@ function FacultyProfile({
               value={
                 draft.interests
               }
-              readOnly={!editing}
+              readOnly={!editing || saving}
               onChange={(event) =>
                 setDraft({
                   ...draft,
@@ -783,7 +791,7 @@ function FacultyProfile({
               value={
                 draft.expertise
               }
-              readOnly={!editing}
+              readOnly={!editing || saving}
               onChange={(event) =>
                 setDraft({
                   ...draft,
