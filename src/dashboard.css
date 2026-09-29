@@ -451,6 +451,30 @@
   font-size: 0.7rem;
 }
 
+.opportunity-card__availability {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 13px;
+  margin: -7px 0 16px;
+  color: #47765f;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.opportunity-card__availability > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.opportunity-card__availability .is-full {
+  color: #a14347;
+}
+
+.opportunity-card__availability .is-funded {
+  color: #8a6831;
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;
@@ -581,6 +605,7 @@
 .project-facts > div > span { display: grid; gap: 3px; }
 .project-facts small { color: #988e89; font-size: 0.56rem; }
 .project-facts strong { color: #4c413e; font-size: 0.66rem; line-height: 1.4; }
+.project-facts__currency { min-width: 18px; color: #805258; font-size: 0.58rem; font-weight: 800; line-height: 18px; }
 .project-modal__footer { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 18px 34px; border-top: 1px solid #e8e0dc; background: rgba(255, 254, 251, 0.96); backdrop-filter: blur(8px); }
 .project-modal__footer .outline-button { min-height: 39px; padding-inline: 16px; }
 .project-modal__footer .primary-dashboard-button { min-height: 39px; display: inline-flex; align-items: center; gap: 6px; }
@@ -740,6 +765,9 @@
 .status--under-review { color: #8a6831; background: #f7efd9; }
 .status--accepted { color: #39725a; background: #e5f1ea; }
 .status--submitted { color: #416c8b; background: #e7f0f5; }
+.application-notice { margin: 14px 30px 0; padding: 11px 13px; border-radius: 10px; font-size: 0.7rem; line-height: 1.45; }
+.application-notice--success { color: #39725a; background: #e5f1ea; }
+.application-notice--error { color: #963e46; background: #f9eaeb; }
 .project-link { padding: 0; color: #59404a; border: 0; background: transparent; font: inherit; font-weight: 700; line-height: 1.45; text-align: left; text-decoration: underline; text-decoration-color: #d4c4be; text-underline-offset: 3px; cursor: pointer; }
 .project-link:hover { color: #8b3f45; text-decoration-color: currentColor; }
 
@@ -881,6 +909,7 @@
   .dashboard-header__actions { gap: 8px; }
   .header-icon-button { display: none; }
   .dashboard-content { padding-inline: 12px; }
+  .application-notice { margin-inline: 12px; }
   .content-card { padding: 18px; }
   .student-hero h2 { font-size: 1.65rem; }
   .student-hero p { font-size: 0.76rem; }

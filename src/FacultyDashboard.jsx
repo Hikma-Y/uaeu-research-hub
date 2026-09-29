@@ -64,75 +64,6 @@ const FACULTY_NAV = [
   },
 ]
 
-/*
- * Projects and applications are still temporary.
- * We will connect these sections to Supabase after
- * confirming that the faculty profile works correctly.
- */
-const INITIAL_PROJECTS = [
-  {
-    id: 'FP001',
-    title:
-      'AI-Based Matching for Senior Graduation Projects',
-    program: 'SGP',
-    status: 'Open',
-    applicants: 8,
-    deadline: 'September 18, 2026',
-    description:
-      'Develop and evaluate a matching model that connects students with research opportunities based on skills, interests, and academic background.',
-    skills: [
-      'Python',
-      'NLP',
-      'Machine Learning',
-    ],
-  },
-  {
-    id: 'FP002',
-    title:
-      'Smart Water Monitoring for Sustainable Campuses',
-    program: 'SURE+',
-    status: 'In Progress',
-    applicants: 5,
-    deadline: 'Closed',
-    description:
-      'Build an IoT-supported analytics system for monitoring and improving campus water use.',
-    skills: [
-      'IoT',
-      'Data Analysis',
-      'Sustainability',
-    ],
-  },
-]
-
-const INITIAL_CANDIDATES = [
-  {
-    id: 'C001',
-    name: 'Alya Al Nuaimi',
-    initials: 'AN',
-    projectId: 'FP001',
-    gpa: '3.87',
-    skills: [
-      'Python',
-      'NLP',
-      'Research Writing',
-    ],
-    status: 'Pending',
-  },
-  {
-    id: 'C002',
-    name: 'Omar Al Mansoori',
-    initials: 'OM',
-    projectId: 'FP001',
-    gpa: '3.65',
-    skills: [
-      'Python',
-      'Machine Learning',
-      'Data Analysis',
-    ],
-    status: 'Pending',
-  },
-]
-
 function getInitials(name) {
   if (!name) return 'FA'
 
@@ -166,6 +97,36 @@ function createFacultyDraft(profile) {
       ? profile.skills.join(', ')
       : '',
   }
+}
+
+function splitProjectList(value) {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function getRemainingSlots(project) {
+  const capacity = Number(project.student_capacity) || 0
+  const reserved = Number(project.reserved_places) || 0
+
+  return Math.max(capacity - reserved, 0)
+}
+
+function getRemainingSlotsLabel(project) {
+  const remaining = getRemainingSlots(project)
+
+  if (remaining === 0) return 'Full'
+
+  return `${remaining} student${remaining === 1 ? '' : 's'} remaining`
+}
+
+function formatStudentPayment(payment) {
+  const amount = Number(payment)
+
+  return new Intl.NumberFormat('en-AE', {
+    maximumFractionDigits: 2,
+  }).format(amount)
 }
 
 function FacultySidebar({
@@ -312,7 +273,8 @@ function Overview({
   const openProjects =
     projects.filter(
       (project) =>
-        project.status === 'Open'
+        project.visibility === 'public' &&
+        getRemainingSlots(project) > 0
     ).length
 
   const pending =
@@ -848,76 +810,185 @@ function FacultyProfile({
 }
 
 function FacultyProjects({
+  profile,
   projects,
-  setProjects,
+  loading,
+  error,
+  onProjectsChanged,
 }) {
   const [showForm, setShowForm] =
     useState(false)
 
-  const [draft, setDraft] =
-    useState({
+  const [editingProjectId, setEditingProjectId] =
+    useState(null)
+
+  const [draft, setDraft] = useState({
+    title: '',
+    program: 'SGP',
+    department: '',
+    deadline: '',
+    description: '',
+    skills: '',
+    visibility: 'draft',
+    student_capacity: '1',
+    student_payment_aed: '',
+  })
+
+  const [isSaving, setIsSaving] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [formSuccess, setFormSuccess] = useState('')
+
+  function createEmptyDraft() {
+    return {
       title: '',
       program: 'SGP',
+      department: '',
       deadline: '',
       description: '',
       skills: '',
-    })
+      visibility: 'draft',
+      student_capacity: '1',
+      student_payment_aed: '',
+    }
+  }
 
-  function createProject(event) {
-    event.preventDefault()
-
-    /*
-     * Project creation is still temporary/local.
-     * We will replace this with Supabase next.
-     */
-    const id =
-      `TEMP-${Date.now()}`
-
-    setProjects(
-      (current) => [
-        {
-          id,
-
-          title:
-            draft.title,
-
-          program:
-            draft.program,
-
-          status:
-            'Draft',
-
-          applicants:
-            0,
-
-          deadline:
-            draft.deadline,
-
-          description:
-            draft.description,
-
-          skills:
-            draft.skills
-              .split(',')
-              .map((item) =>
-                item.trim()
-              )
-              .filter(Boolean),
-        },
-
-        ...current,
-      ]
-    )
-
-    setDraft({
-      title: '',
-      program: 'SGP',
-      deadline: '',
-      description: '',
-      skills: '',
-    })
-
+  function closeForm() {
     setShowForm(false)
+    setEditingProjectId(null)
+    setFormError('')
+  }
+
+  function startCreatingProject() {
+    setDraft(createEmptyDraft())
+    setEditingProjectId(null)
+    setFormError('')
+    setFormSuccess('')
+    setShowForm(true)
+  }
+
+  function startEditingProject(project) {
+    setDraft({
+      title: project.title || '',
+      program: project.type || 'SGP',
+      department: project.department || '',
+      deadline: project.deadline || '',
+      description: project.description || '',
+      skills: Array.isArray(project.tags)
+        ? project.tags.join(', ')
+        : '',
+      visibility: project.visibility || 'draft',
+      student_capacity: String(project.student_capacity || 1),
+      student_payment_aed:
+        project.student_payment_aed === null ||
+        project.student_payment_aed === undefined
+          ? ''
+          : String(project.student_payment_aed),
+    })
+    setEditingProjectId(project.id)
+    setFormError('')
+    setFormSuccess('')
+    setShowForm(true)
+  }
+
+  async function saveProject(event) {
+    event.preventDefault()
+    setFormError('')
+    setFormSuccess('')
+
+    if (!profile?.id) {
+      setFormError('Your faculty profile could not be identified.')
+      return
+    }
+
+    const studentCapacity = Number(draft.student_capacity)
+    const payment =
+      draft.student_payment_aed === ''
+        ? null
+        : Number(draft.student_payment_aed)
+
+    if (!Number.isInteger(studentCapacity) || studentCapacity < 1) {
+      setFormError('Number of students needed must be a whole number of at least 1.')
+      return
+    }
+
+    if (payment !== null && (!Number.isFinite(payment) || payment < 0)) {
+      setFormError('Student payment must be a non-negative amount in AED.')
+      return
+    }
+
+    const projectPayload = {
+      owner_id: profile.id,
+      title: draft.title.trim(),
+      type: draft.program,
+      department: draft.department.trim(),
+      description: draft.description.trim(),
+      tags: splitProjectList(draft.skills),
+      requirements: splitProjectList(draft.skills),
+      supervisor: profile.full_name || 'Faculty member',
+      deadline: draft.deadline || null,
+      visibility: draft.visibility,
+      student_capacity: studentCapacity,
+      student_payment_aed: payment,
+    }
+
+    setIsSaving(true)
+
+    const request = editingProjectId
+      ? supabase
+          .from('research_opportunities')
+          .update(projectPayload)
+          .eq('id', editingProjectId)
+          .select('id')
+          .single()
+      : supabase
+          .from('research_opportunities')
+          .insert(projectPayload)
+          .select('id')
+          .single()
+
+    const { error: saveError } = await request
+    setIsSaving(false)
+
+    if (saveError) {
+      console.error('Project save error:', saveError.message)
+      setFormError(saveError.message || 'Could not save the project. Please try again.')
+      return
+    }
+
+    await onProjectsChanged()
+    setFormSuccess(
+      editingProjectId
+        ? 'Project updated successfully.'
+        : draft.visibility === 'public'
+          ? 'Project published and open for student applications.'
+          : 'Project saved as a private draft.'
+    )
+    setDraft(createEmptyDraft())
+    setEditingProjectId(null)
+    setShowForm(false)
+  }
+
+  async function deleteProject(project) {
+    if (!window.confirm(`Remove “${project.title}”? This cannot be undone.`)) {
+      return
+    }
+
+    setFormError('')
+    setFormSuccess('')
+
+    const { error: deleteError } = await supabase
+      .from('research_opportunities')
+      .delete()
+      .eq('id', project.id)
+
+    if (deleteError) {
+      console.error('Project delete error:', deleteError.message)
+      setFormError(deleteError.message || 'Could not remove the project.')
+      return
+    }
+
+    await onProjectsChanged()
+    setFormSuccess('Project removed.')
   }
 
   return (
@@ -930,12 +1001,7 @@ function FacultyProjects({
             <button
               className="primary-dashboard-button faculty-create-button"
               type="button"
-              onClick={() =>
-                setShowForm(
-                  (current) =>
-                    !current
-                )
-              }
+              onClick={() => (showForm ? closeForm() : startCreatingProject())}
             >
               {showForm ? (
                 <>
@@ -955,22 +1021,17 @@ function FacultyProjects({
         {showForm && (
           <form
             className="faculty-project-form"
-            onSubmit={
-              createProject
-            }
+            onSubmit={saveProject}
           >
             <label>
               Project title
 
               <input
-                value={
-                  draft.title
-                }
+                value={draft.title}
                 onChange={(event) =>
                   setDraft({
                     ...draft,
-                    title:
-                      event.target.value,
+                    title: event.target.value,
                   })
                 }
                 required
@@ -981,14 +1042,11 @@ function FacultyProjects({
               Program
 
               <select
-                value={
-                  draft.program
-                }
+                value={draft.program}
                 onChange={(event) =>
                   setDraft({
                     ...draft,
-                    program:
-                      event.target.value,
+                    program: event.target.value,
                   })
                 }
               >
@@ -1007,18 +1065,31 @@ function FacultyProjects({
             </label>
 
             <label>
+              Department
+
+              <input
+                value={draft.department}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    department: event.target.value,
+                  })
+                }
+                placeholder="Computer Science"
+                required
+              />
+            </label>
+
+            <label>
               Application deadline
 
               <input
                 type="date"
-                value={
-                  draft.deadline
-                }
+                value={draft.deadline}
                 onChange={(event) =>
                   setDraft({
                     ...draft,
-                    deadline:
-                      event.target.value,
+                    deadline: event.target.value,
                   })
                 }
                 required
@@ -1029,14 +1100,11 @@ function FacultyProjects({
               Required skills
 
               <input
-                value={
-                  draft.skills
-                }
+                value={draft.skills}
                 onChange={(event) =>
                   setDraft({
                     ...draft,
-                    skills:
-                      event.target.value,
+                    skills: event.target.value,
                   })
                 }
                 placeholder="Python, NLP, Machine Learning"
@@ -1044,18 +1112,78 @@ function FacultyProjects({
               />
             </label>
 
+            <label>
+              Number of students needed
+
+              <input
+                type="number"
+                value={draft.student_capacity}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    student_capacity: event.target.value,
+                  })
+                }
+                min="1"
+                step="1"
+                required
+              />
+
+              <small>Set the total number of places for student applicants.</small>
+            </label>
+
+            <label>
+              Student payment (AED)
+
+              <input
+                type="number"
+                value={draft.student_payment_aed}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    student_payment_aed: event.target.value,
+                  })
+                }
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="Optional"
+              />
+
+              <small>Leave blank when the project is unpaid or funding is not stated.</small>
+            </label>
+
+            <label>
+              Project visibility
+
+              <select
+                value={draft.visibility}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    visibility: event.target.value,
+                  })
+                }
+                required
+              >
+                <option value="draft">Draft / Private</option>
+                <option value="public">Public / Open for applications</option>
+              </select>
+
+              <small>
+                Drafts are visible only to you. Public projects appear to eligible students and accept applications.
+              </small>
+            </label>
+
             <label className="faculty-project-form__wide">
               Description
 
               <textarea
-                value={
-                  draft.description
-                }
+                value={draft.description}
                 onChange={(event) =>
                   setDraft({
                     ...draft,
-                    description:
-                      event.target.value,
+                    description: event.target.value,
                   })
                 }
                 minLength={20}
@@ -1063,19 +1191,62 @@ function FacultyProjects({
               />
             </label>
 
+            {formError && (
+              <p className="faculty-project-form__feedback is-error" role="alert">
+                {formError}
+              </p>
+            )}
+
+            {formSuccess && (
+              <p className="faculty-project-form__feedback is-success" role="status">
+                {formSuccess}
+              </p>
+            )}
+
             <div className="faculty-project-form__actions">
               <button
                 className="primary-dashboard-button"
                 type="submit"
+                disabled={isSaving}
               >
-                Add temporary project
+                {isSaving
+                  ? 'Saving…'
+                  : editingProjectId
+                    ? 'Save project changes'
+                    : draft.visibility === 'public'
+                      ? 'Publish project'
+                      : 'Save private draft'}
               </button>
             </div>
           </form>
         )}
 
+        {formError && !showForm && (
+          <p className="faculty-project-form__feedback is-error" role="alert">
+            {formError}
+          </p>
+        )}
+
+        {formSuccess && !showForm && (
+          <p className="faculty-project-form__feedback is-success" role="status">
+            {formSuccess}
+          </p>
+        )}
+
         <div className="faculty-project-grid">
-          {projects.map(
+          {loading && <p>Loading your research projects…</p>}
+
+          {!loading && error && <p className="faculty-project-form__feedback is-error">{error}</p>}
+
+          {!loading && !error && !projects.length && (
+            <div className="empty-state">
+              <BriefcaseBusiness size={30} />
+              <h3>No projects yet</h3>
+              <p>Create a private draft now, then publish it when it is ready for students.</p>
+            </div>
+          )}
+
+          {!loading && !error && projects.map(
             (project) => (
               <article
                 className="faculty-project-card"
@@ -1083,20 +1254,25 @@ function FacultyProjects({
               >
                 <div>
                   <span className="project-id">
-                    {project.id}
+                    {`PRJ-${String(project.id).slice(0, 8)}`}
                     {' · '}
-                    {project.program}
+                    {project.type}
                   </span>
 
                   <em
-                    className={`faculty-project-status faculty-project-status--${project.status
-                      .toLowerCase()
-                      .replaceAll(
-                        ' ',
-                        '-'
-                      )}`}
+                    className={`faculty-project-status faculty-project-status--${
+                      project.visibility === 'draft'
+                        ? 'draft'
+                        : getRemainingSlots(project) === 0
+                          ? 'full'
+                          : 'open'
+                    }`}
                   >
-                    {project.status}
+                    {project.visibility === 'draft'
+                      ? 'Draft / Private'
+                      : getRemainingSlots(project) === 0
+                        ? 'Full'
+                        : 'Public / Open'}
                   </em>
                 </div>
 
@@ -1109,7 +1285,7 @@ function FacultyProjects({
                 </p>
 
                 <div className="tag-list">
-                  {project.skills.map(
+                  {(Array.isArray(project.tags) ? project.tags : []).map(
                     (skill) => (
                       <span
                         key={skill}
@@ -1126,33 +1302,36 @@ function FacultyProjects({
                       size={16}
                     />
 
-                    {
-                      project.applicants
-                    }{' '}
-                    applicants
+                    {getRemainingSlotsLabel(project)}
                   </span>
 
-                  <button
-                    className="delete-project-button"
-                    type="button"
-                    onClick={() =>
-                      setProjects(
-                        (current) =>
-                          current.filter(
-                            (item) =>
-                              item.id !==
-                              project.id
-                          )
-                      )
-                    }
-                  >
-                    <Trash2
-                      size={14}
-                    />
+                  <div className="faculty-project-actions">
+                    <button
+                      className="text-button"
+                      type="button"
+                      onClick={() => startEditingProject(project)}
+                    >
+                      <Pencil size={14} />
+                      Edit
+                    </button>
 
-                    Remove
-                  </button>
+                    <button
+                      className="delete-project-button"
+                      type="button"
+                      onClick={() => deleteProject(project)}
+                    >
+                      <Trash2 size={14} />
+                      Remove
+                    </button>
+                  </div>
                 </footer>
+
+                {project.student_payment_aed !== null &&
+                  project.student_payment_aed !== undefined && (
+                    <small className="faculty-project-payment">
+                      Student stipend: AED {formatStudentPayment(project.student_payment_aed)}
+                    </small>
+                  )}
               </article>
             )
           )}
@@ -1163,68 +1342,97 @@ function FacultyProjects({
 }
 
 function CandidateCard({
+  application,
   candidate,
   project,
+  onReview,
+  isReviewing,
 }) {
+  // Overview still uses the existing candidate summary shape, while the
+  // Applications tab supplies a real database application.  Supporting both
+  // preserves the overview and lets the Applications tab show live data.
+  const entry = application || candidate
+
+  if (!entry) return null
+
+  const studentName = entry.student_name || entry.name || 'Student applicant'
+  const isSubmitted = Boolean(application) && entry.status === 'Submitted'
+  const appliedDate = entry.created_at
+    ? `Applied ${new Date(entry.created_at).toLocaleDateString()}`
+    : `GPA ${entry.gpa || 'Not provided'} · ${entry.status || 'Pending'}`
+
   return (
     <article className="candidate-card">
       <div className="candidate-card__top">
         <span className="candidate-avatar">
-          {candidate.initials}
+          {getInitials(studentName)}
         </span>
 
         <span className="candidate-match">
           <Sparkles size={14} />
-          Not calculated
+          {entry.status || 'Pending'}
         </span>
       </div>
 
       <h3>
-        {candidate.name}
+        {studentName}
       </h3>
 
       <p>
-        {project?.title}
-      </p>
-
-      <div className="tag-list">
-        {candidate.skills.map(
-          (skill) => (
-            <span key={skill}>
-              {skill}
-            </span>
-          )
+        {entry.project_title || project?.title || 'Project not specified'}
+        {entry.student_email && (
+          <><br />{entry.student_email}</>
         )}
-      </div>
+      </p>
 
       <footer>
         <span>
-          GPA {candidate.gpa}
-          {' · '}
-          {candidate.status}
+          {appliedDate}
         </span>
       </footer>
+
+      {isSubmitted && (
+        <div className="candidate-quick-actions">
+          <button
+            className="candidate-accept"
+            type="button"
+            disabled={isReviewing}
+            onClick={() => onReview(entry.id, 'Accepted')}
+          >
+            <Check size={14} />
+            Accept
+          </button>
+
+          <button
+            className="candidate-reject"
+            type="button"
+            disabled={isReviewing}
+            onClick={() => onReview(entry.id, 'Rejected')}
+          >
+            <X size={14} />
+            Reject
+          </button>
+        </div>
+      )}
     </article>
   )
 }
 
 function FacultyApplications({
-  candidates,
-  projects,
+  applications,
+  loading,
+  error,
+  reviewingApplicationIds,
+  reviewNotice,
+  onReview,
 }) {
   const [query, setQuery] =
     useState('')
 
   const visible =
-    candidates.filter(
-      (candidate) =>
-        candidate.name
-          .toLowerCase()
-          .includes(
-            query.toLowerCase()
-          ) ||
-        candidate.skills
-          .join(' ')
+    applications.filter(
+      (application) =>
+        `${application.student_name || ''} ${application.student_email || ''} ${application.project_title || ''}`
           .toLowerCase()
           .includes(
             query.toLowerCase()
@@ -1240,7 +1448,7 @@ function FacultyApplications({
           action={
             <span className="count-pill">
               {visible.length}{' '}
-              candidates
+              applications
             </span>
           }
         />
@@ -1255,40 +1463,52 @@ function FacultyApplications({
                 event.target.value
               )
             }
-            placeholder="Search candidates or skills"
+            placeholder="Search students or projects"
           />
         </label>
 
-        <div className="faculty-candidate-grid">
-          {visible.map(
-            (candidate) => (
-              <CandidateCard
-                key={candidate.id}
-                candidate={
-                  candidate
-                }
-                project={projects.find(
-                  (project) =>
-                    project.id ===
-                    candidate.projectId
-                )}
-              />
-            )
-          )}
-        </div>
+        {reviewNotice && (
+          <p
+            className={`faculty-project-form__feedback ${
+              reviewNotice.type === 'error' ? 'is-error' : 'is-success'
+            }`}
+            role={reviewNotice.type === 'error' ? 'alert' : 'status'}
+          >
+            {reviewNotice.message}
+          </p>
+        )}
 
-        {!visible.length && (
+        {loading ? (
+          <p>Loading student applications...</p>
+        ) : error ? (
+          <p className="faculty-project-form__feedback is-error" role="alert">
+            {error}
+          </p>
+        ) : (
+          <div className="faculty-candidate-grid">
+            {visible.map(
+              (application) => (
+                <CandidateCard
+                  key={application.id}
+                  application={application}
+                  onReview={onReview}
+                  isReviewing={reviewingApplicationIds.includes(application.id)}
+                />
+              )
+            )}
+          </div>
+        )}
+
+        {!loading && !error && !visible.length && (
           <div className="empty-state">
             <FileSearch
               size={30}
             />
 
-            <h3>
-              No candidates found
-            </h3>
+            <h3>No student applications found</h3>
 
             <p>
-              Try another search.
+              Submitted applications for your projects will appear here.
             </p>
           </div>
         )}
@@ -1497,18 +1717,153 @@ export default function FacultyDashboard({
   const [
     projects,
     setProjects,
-  ] = useState(
-    INITIAL_PROJECTS
-  )
+  ] = useState([])
 
-  const [candidates] =
-    useState(
-      INITIAL_CANDIDATES
-    )
+  const [projectsLoading, setProjectsLoading] =
+    useState(true)
+
+  const [projectsError, setProjectsError] =
+    useState('')
+
+  const [facultyApplications, setFacultyApplications] = useState([])
+  const [applicationsLoading, setApplicationsLoading] = useState(true)
+  const [applicationsError, setApplicationsError] = useState('')
+  const [reviewingApplicationIds, setReviewingApplicationIds] = useState([])
+  const [applicationReviewNotice, setApplicationReviewNotice] = useState(null)
 
   useEffect(() => {
     setFacultyProfile(profile)
   }, [profile])
+
+  async function loadFacultyProjects() {
+    if (!facultyProfile?.id) {
+      setProjects([])
+      setProjectsLoading(false)
+      return
+    }
+
+    setProjectsLoading(true)
+    setProjectsError('')
+
+    const [projectsResult, applicationsResult] = await Promise.all([
+      supabase
+        .from('research_opportunities')
+        .select('*')
+        .eq('owner_id', facultyProfile.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('applications')
+        .select('opportunity_id, status'),
+    ])
+
+    if (projectsResult.error || applicationsResult.error) {
+      const loadError = projectsResult.error || applicationsResult.error
+      console.error('Faculty project load error:', loadError.message)
+      setProjectsError('Could not load your research projects.')
+      setProjectsLoading(false)
+      return
+    }
+
+    const reservations = (applicationsResult.data || [])
+      .filter((application) => application.status !== 'Rejected')
+      .reduce(
+      (counts, application) => ({
+        ...counts,
+        [application.opportunity_id]:
+          (counts[application.opportunity_id] || 0) + 1,
+      }),
+      {}
+      )
+
+    setProjects(
+      (projectsResult.data || []).map((project) => ({
+        ...project,
+        reserved_places: reservations[project.id] || 0,
+      }))
+    )
+    setProjectsLoading(false)
+  }
+
+  async function loadFacultyApplications() {
+    if (!facultyProfile?.id) {
+      setFacultyApplications([])
+      setApplicationsLoading(false)
+      return
+    }
+
+    setApplicationsLoading(true)
+    setApplicationsError('')
+
+    const { data, error } = await supabase
+      .from('faculty_project_applications')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Faculty application load error:', error.message)
+      setApplicationsError('Could not load student applications.')
+      setApplicationsLoading(false)
+      return
+    }
+
+    setFacultyApplications(data || [])
+    setApplicationsLoading(false)
+  }
+
+  useEffect(() => {
+    loadFacultyProjects()
+    loadFacultyApplications()
+  }, [facultyProfile?.id])
+
+  async function reviewApplication(applicationId, decision) {
+    if (reviewingApplicationIds.includes(applicationId)) return
+
+    setApplicationReviewNotice(null)
+    setReviewingApplicationIds((current) => [...current, applicationId])
+
+    const { error } = await supabase.rpc(
+      'review_research_application',
+      {
+        p_application_id: applicationId,
+        p_decision: decision,
+      }
+    )
+
+    setReviewingApplicationIds((current) =>
+      current.filter((id) => id !== applicationId)
+    )
+
+    if (error) {
+      console.error('Application review error:', error.message)
+      setApplicationReviewNotice({
+        type: 'error',
+        message: error.message || 'Could not update the application.',
+      })
+      return
+    }
+
+    setApplicationReviewNotice({
+      type: 'success',
+      message: decision === 'Accepted'
+        ? 'Application accepted. Its place remains reserved.'
+        : 'Application rejected. The project place is available again.',
+    })
+
+    await Promise.all([
+      loadFacultyProjects(),
+      loadFacultyApplications(),
+    ])
+  }
+
+  const candidates = facultyApplications.map((application) => ({
+    id: application.id,
+    name: application.student_name || 'Student applicant',
+    initials: getInitials(application.student_name || 'Student applicant'),
+    projectId: application.opportunity_id,
+    gpa: 'Not provided',
+    skills: [],
+    status: application.status,
+  }))
 
   const screens = {
     overview: (
@@ -1536,19 +1891,22 @@ export default function FacultyDashboard({
 
     projects: (
       <FacultyProjects
+        profile={facultyProfile}
         projects={projects}
-        setProjects={
-          setProjects
-        }
+        loading={projectsLoading}
+        error={projectsError}
+        onProjectsChanged={loadFacultyProjects}
       />
     ),
 
     applications: (
       <FacultyApplications
-        candidates={
-          candidates
-        }
-        projects={projects}
+        applications={facultyApplications}
+        loading={applicationsLoading}
+        error={applicationsError}
+        reviewingApplicationIds={reviewingApplicationIds}
+        reviewNotice={applicationReviewNotice}
+        onReview={reviewApplication}
       />
     ),
 

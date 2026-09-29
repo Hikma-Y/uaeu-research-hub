@@ -83,6 +83,37 @@ function formatDeadline(dateValue) {
   })
 }
 
+function getRemainingSlots(project) {
+  const remaining = Number(project?.remaining_slots)
+
+  if (Number.isFinite(remaining)) {
+    return Math.max(remaining, 0)
+  }
+
+  return Math.max(Number(project?.student_capacity) || 0, 0)
+}
+
+function getAvailabilityLabel(project) {
+  const remaining = getRemainingSlots(project)
+
+  if (remaining === 0) return 'Full'
+
+  return `${remaining} student${remaining === 1 ? '' : 's'} remaining`
+}
+
+function hasStudentPayment(project) {
+  return (
+    project?.student_payment_aed !== null &&
+    project?.student_payment_aed !== undefined
+  )
+}
+
+function formatStudentPayment(payment) {
+  return new Intl.NumberFormat('en-AE', {
+    maximumFractionDigits: 2,
+  }).format(Number(payment))
+}
+
 function formatBytes(bytes) {
   if (!bytes) return 'Unknown size'
 
@@ -246,10 +277,13 @@ function OpportunityCard({
   onView,
   onApply,
   isApplied,
+  isApplying,
 }) {
   const tags = Array.isArray(opportunity.tags)
     ? opportunity.tags
     : []
+
+  const isFull = getRemainingSlots(opportunity) === 0
 
   return (
     <article className="opportunity-card">
@@ -277,6 +311,19 @@ function OpportunityCard({
         {opportunity.type} · {opportunity.department}
       </p>
 
+      <div className="opportunity-card__availability">
+        <span className={isFull ? 'is-full' : ''}>
+          <UsersRound size={15} />
+          {getAvailabilityLabel(opportunity)}
+        </span>
+
+        {hasStudentPayment(opportunity) && (
+          <span className="is-funded">
+            Student stipend: AED {formatStudentPayment(opportunity.student_payment_aed)}
+          </span>
+        )}
+      </div>
+
       <div className="tag-list">
         {tags.map((tag) => (
           <span key={tag}>
@@ -303,7 +350,7 @@ function OpportunityCard({
           <button
             className="card-apply-button"
             type="button"
-            disabled={isApplied}
+            disabled={isApplied || isFull || isApplying}
             onClick={() => onApply(opportunity.id)}
           >
             {isApplied ? (
@@ -311,6 +358,10 @@ function OpportunityCard({
                 <Check size={14} />
                 Applied
               </>
+            ) : isFull ? (
+              'Full'
+            ) : isApplying ? (
+              'Applying…'
             ) : (
               'Apply'
             )}
@@ -324,6 +375,7 @@ function OpportunityCard({
 function ProjectDetailsModal({
   project,
   isApplied,
+  isApplying,
   onApply,
   onClose,
 }) {
@@ -358,6 +410,8 @@ function ProjectDetailsModal({
   const tags = Array.isArray(project.tags)
     ? project.tags
     : []
+
+  const isFull = getRemainingSlots(project) === 0
 
   return (
     <div
@@ -491,14 +545,30 @@ function ProjectDetailsModal({
 
               <span>
                 <small>
-                  Project format
+                  Student places
                 </small>
 
                 <strong>
-                  Collaborative team
+                  {getAvailabilityLabel(project)}
                 </strong>
               </span>
             </div>
+
+            {hasStudentPayment(project) && (
+              <div>
+                <span className="project-facts__currency">AED</span>
+
+                <span>
+                  <small>
+                    Student stipend
+                  </small>
+
+                  <strong>
+                    AED {formatStudentPayment(project.student_payment_aed)}
+                  </strong>
+                </span>
+              </div>
+            )}
           </aside>
         </div>
 
@@ -514,7 +584,7 @@ function ProjectDetailsModal({
           <button
             className="primary-dashboard-button"
             type="button"
-            disabled={isApplied}
+            disabled={isApplied || isFull || isApplying}
             onClick={() => onApply(project.id)}
           >
             {isApplied ? (
@@ -522,6 +592,10 @@ function ProjectDetailsModal({
                 <Check size={16} />
                 Application submitted
               </>
+            ) : isFull ? (
+              'Project full'
+            ) : isApplying ? (
+              'Submitting application…'
             ) : (
               'Apply for this project'
             )}
@@ -557,6 +631,7 @@ function Overview({
   onViewProject,
   onApply,
   appliedProjectIds,
+  applyingProjectIds,
   applicationCount,
 }) {
   const firstName = getFirstName(
@@ -664,6 +739,7 @@ function Overview({
                   isApplied={appliedProjectIds.includes(
                     item.id
                   )}
+                  isApplying={applyingProjectIds.includes(item.id)}
                 />
               ))}
           </div>
@@ -2185,6 +2261,7 @@ function Opportunities({
   onViewProject,
   onApply,
   appliedProjectIds,
+  applyingProjectIds,
 }) {
   const [query, setQuery] =
     useState('')
@@ -2319,6 +2396,7 @@ function Opportunities({
                 isApplied={appliedProjectIds.includes(
                   item.id
                 )}
+                isApplying={applyingProjectIds.includes(item.id)}
               />
             </div>
           ))}
@@ -3207,43 +3285,37 @@ export default function StudentDashboard({
     setApplicationsError,
   ] = useState('')
 
+  const [applyingProjectIds, setApplyingProjectIds] = useState([])
+
+  const [applicationNotice, setApplicationNotice] = useState(null)
+
   useEffect(() => {
     setStudentProfile(profile)
   }, [profile])
 
-  useEffect(() => {
-    async function loadOpportunities() {
-      setOpportunitiesLoading(true)
-      setOpportunitiesError('')
+  async function loadOpportunities() {
+    setOpportunitiesLoading(true)
+    setOpportunitiesError('')
 
-      const { data, error } =
-        await supabase
-          .from(
-            'research_opportunities'
-          )
-          .select('*')
-          .order('created_at', {
-            ascending: false,
-          })
+    const { data, error } = await supabase
+      .from('public_research_opportunities')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-      if (error) {
-        console.error(
-          'Opportunity load error:',
-          error.message
-        )
-
-        setOpportunitiesError(
-          'Could not load research opportunities.'
-        )
-
-        setOpportunitiesLoading(false)
-        return
-      }
-
-      setOpportunities(data || [])
+    if (error) {
+      console.error('Opportunity load error:', error.message)
+      setOpportunitiesError('Could not load research opportunities.')
       setOpportunitiesLoading(false)
+      return null
     }
 
+    const publicOpportunities = data || []
+    setOpportunities(publicOpportunities)
+    setOpportunitiesLoading(false)
+    return publicOpportunities
+  }
+
+  useEffect(() => {
     loadOpportunities()
   }, [])
 
@@ -3303,9 +3375,10 @@ export default function StudentDashboard({
     projectId
   ) {
     if (!studentProfile?.id) {
-      alert(
-        'Student profile could not be identified.'
-      )
+      setApplicationNotice({
+        type: 'error',
+        message: 'Student profile could not be identified.',
+      })
       return
     }
 
@@ -3314,37 +3387,62 @@ export default function StudentDashboard({
         projectId
       )
     ) {
+      setApplicationNotice({
+        type: 'error',
+        message: 'You have already applied to this project.',
+      })
       return
     }
 
-    const { error } =
-      await supabase
-        .from('applications')
-        .insert({
-          student_id:
-            studentProfile.id,
+    const project = opportunities.find((item) => item.id === projectId)
 
-          opportunity_id:
-            projectId,
+    if (!project || getRemainingSlots(project) === 0) {
+      setApplicationNotice({
+        type: 'error',
+        message: 'This project is full or is no longer available for applications.',
+      })
+      return
+    }
 
-          status:
-            'Submitted',
-        })
+    if (applyingProjectIds.includes(projectId)) {
+      return
+    }
+
+    setApplicationNotice(null)
+    setApplyingProjectIds((current) => [...current, projectId])
+
+    const { error } = await supabase.rpc(
+      'apply_to_research_opportunity',
+      { p_opportunity_id: projectId }
+    )
+
+    setApplyingProjectIds((current) =>
+      current.filter((id) => id !== projectId)
+    )
 
     if (error) {
-      console.error(
-        'Application submission error:',
-        error.message
-      )
-
-      alert(
-        'Could not submit the application. Please try again.'
-      )
+      console.error('Application submission error:', error.message)
+      setApplicationNotice({
+        type: 'error',
+        message:
+          error.message ||
+          'Could not submit the application. Please try again.',
+      })
 
       return
     }
 
+    const refreshedOpportunities = await loadOpportunities()
     await loadApplications()
+    setSelectedProject((current) =>
+      current && refreshedOpportunities
+        ? refreshedOpportunities.find((item) => item.id === current.id) || current
+        : current
+    )
+    setApplicationNotice({
+      type: 'success',
+      message: 'Application submitted. Your place is now reserved for faculty review.',
+    })
   }
 
   if (opportunitiesLoading) {
@@ -3409,6 +3507,7 @@ export default function StudentDashboard({
         onViewProject={setSelectedProject}
         onApply={applyToProject}
         appliedProjectIds={appliedProjectIds}
+        applyingProjectIds={applyingProjectIds}
         applicationCount={applications.length}
       />
     ),
@@ -3426,6 +3525,7 @@ export default function StudentDashboard({
         onViewProject={setSelectedProject}
         onApply={applyToProject}
         appliedProjectIds={appliedProjectIds}
+        applyingProjectIds={applyingProjectIds}
       />
     ),
 
@@ -3464,6 +3564,15 @@ export default function StudentDashboard({
           profile={studentProfile}
         />
 
+        {applicationNotice && (
+          <p
+            className={`application-notice application-notice--${applicationNotice.type}`}
+            role={applicationNotice.type === 'error' ? 'alert' : 'status'}
+          >
+            {applicationNotice.message}
+          </p>
+        )}
+
         <main className="dashboard-content">
           {Object.entries(
             screens
@@ -3489,6 +3598,11 @@ export default function StudentDashboard({
             ? appliedProjectIds.includes(
                 selectedProject.id
               )
+            : false
+        }
+        isApplying={
+          selectedProject
+            ? applyingProjectIds.includes(selectedProject.id)
             : false
         }
         onApply={applyToProject}

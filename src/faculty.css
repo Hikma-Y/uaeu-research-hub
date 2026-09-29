@@ -325,6 +325,13 @@
   font-weight: 700;
 }
 
+.faculty-project-form label small {
+  color: #8d817d;
+  font-size: 0.58rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
 .faculty-project-form input,
 .faculty-project-form select,
 .faculty-project-form textarea {
@@ -362,6 +369,25 @@
   justify-content: flex-end;
 }
 
+.faculty-project-form__feedback {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.faculty-project-form__feedback.is-error {
+  color: #963e46;
+  background: #f9eaeb;
+}
+
+.faculty-project-form__feedback.is-success {
+  color: #39725a;
+  background: #e5f1ea;
+}
+
 .faculty-project-card > div:first-child {
   display: flex;
   align-items: center;
@@ -381,6 +407,7 @@
 .faculty-project-status--in-progress { color: #8a6831; background: #f7efd9; }
 .faculty-project-status--draft { color: #71667a; background: #efebf1; }
 .faculty-project-status--closed { color: #8a5558; background: #f5e8e7; }
+.faculty-project-status--full { color: #8a5558; background: #f5e8e7; }
 
 .faculty-project-card h3 {
   min-height: 47px;
@@ -395,6 +422,24 @@
   color: #887e79;
   font-size: 0.67rem;
   line-height: 1.55;
+}
+
+.faculty-project-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.faculty-project-card .faculty-project-actions .text-button {
+  font-size: 0.63rem;
+}
+
+.faculty-project-payment {
+  display: block;
+  margin-top: 11px;
+  color: #39725a;
+  font-size: 0.62rem;
+  font-weight: 800;
 }
 
 .candidate-modal {
