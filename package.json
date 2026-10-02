@@ -15,16 +15,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@socket.io/component-emitter": "3.1.2",
     "@supabase/supabase-js": "^2.112.4",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
     "run": "^2.1.2",
-    "@socket.io/component-emitter": "3.1.2",
     "socket.io-client": "4.8.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
+    "supabase": "^2.118.0",
     "vite": "latest"
   }
 }

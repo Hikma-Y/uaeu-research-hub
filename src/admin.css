@@ -87,10 +87,19 @@
 
 .admin-notification-row {
   display: flex;
+  width: 100%;
   gap: 11px;
   padding: 13px 16px;
+  color: inherit;
   border-bottom: 1px solid #f1ebe7;
+  border-inline: 0;
+  border-top: 0;
+  background: white;
+  text-align: left;
+  cursor: pointer;
 }
+
+.admin-notification-row:hover { background: #faf6f3; }
 
 .admin-notification-row:last-child {
   border-bottom: 0;
@@ -258,6 +267,22 @@
   background: rgba(255, 255, 255, 0.08);
   font-size: 0.64rem;
   font-weight: 700;
+  cursor: pointer;
+  color: #fff;
+  text-align: left;
+}
+
+.admin-welcome-date:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 3px;
+}
+
+.admin-welcome-date-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0.01;
+  pointer-events: none;
 }
 
 .admin-kpi-grid {
@@ -280,6 +305,113 @@
   border-radius: 16px;
   background: #fff;
   box-shadow: 0 8px 28px rgba(75, 53, 47, 0.05);
+}
+
+.admin-kpi-card--interactive {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.admin-kpi-card--interactive:hover,
+.admin-kpi-card--interactive:focus-visible,
+.admin-kpi-card--interactive.is-selected {
+  border-color: #9a7460;
+  box-shadow: 0 10px 30px rgba(111, 62, 55, 0.13);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.admin-metric-results {
+  margin-top: 18px;
+}
+
+.admin-metric-results__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-user-role-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid #eee5e0;
+  border-radius: 10px;
+  background: #fdfbf9;
+}
+
+.admin-user-role-filter button {
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: #796c66;
+  background: transparent;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-user-role-filter button:hover,
+.admin-user-role-filter button:focus-visible {
+  color: #67343a;
+  background: #f5e9e5;
+  outline: none;
+}
+
+.admin-user-role-filter button.is-active {
+  color: #fff;
+  background: #6d353c;
+}
+
+.admin-metric-results__list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-metric-results__list > div {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid #eee5e0;
+  border-radius: 10px;
+  background: #fdfbf9;
+}
+
+.admin-metric-results__project {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid #eee5e0;
+  border-radius: 10px;
+  color: inherit;
+  text-align: left;
+  background: #fdfbf9;
+  cursor: pointer;
+}
+
+.admin-metric-results__project:hover,
+.admin-metric-results__project:focus-visible {
+  border-color: #b58b79;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(111, 62, 55, 0.09);
+  outline: none;
+}
+
+.admin-metric-results__list strong {
+  color: #3e3431;
+  font-size: 0.78rem;
+}
+
+.admin-metric-results__list span {
+  color: #8b7e78;
+  font-size: 0.67rem;
 }
 
 .admin-kpi-card > div {
@@ -647,6 +779,11 @@
   font-weight: 800;
 }
 
+.admin-password-field { position: relative; display: block; }
+.admin-password-field input { width: 100%; padding-right: 42px; }
+.admin-password-field button { width: 34px; height: 34px; position: absolute; top: 50%; right: 5px; display: grid; place-items: center; padding: 0; color: #796b66; border: 0; border-radius: 7px; background: transparent; cursor: pointer; transform: translateY(-50%); }
+.admin-password-field button:hover { color: #6d393d; background: #f4ece8; }
+
 .admin-inline-form textarea,
 .admin-announcement-form textarea {
   min-height: 90px;
@@ -827,6 +964,146 @@
   gap: 10px;
 }
 
+.admin-project-more-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #665956;
+  background: transparent;
+  cursor: pointer;
+}
+
+.admin-project-more-button:hover,
+.admin-project-more-button:focus-visible {
+  color: #703b40;
+  background: #f4ebe6;
+  outline: none;
+}
+
+.admin-project-modal-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(46, 32, 31, 0.46);
+}
+
+.admin-project-modal {
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 26px;
+  border: 1px solid #e9ded8;
+  border-radius: 18px;
+  background: #fffdfb;
+  box-shadow: 0 28px 80px rgba(45, 29, 28, 0.3);
+}
+
+.admin-project-modal > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.admin-project-modal h2 {
+  margin: 9px 0 0;
+  color: #3a302d;
+  font-size: 1.35rem;
+}
+
+.admin-project-modal > header > button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #e5d8d2;
+  border-radius: 9px;
+  color: #624f4a;
+  background: #fff;
+  cursor: pointer;
+}
+
+.admin-project-modal > p,
+.admin-project-modal__section > p {
+  color: #756864;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.admin-project-modal dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 20px 0;
+}
+
+.admin-project-modal dl div,
+.admin-project-modal__milestones > div {
+  padding: 12px;
+  border-radius: 10px;
+  background: #f7f3f0;
+}
+
+.admin-project-modal dt {
+  color: #9a8b84;
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-project-modal dd {
+  margin: 5px 0 0;
+  color: #4d403c;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.admin-project-modal__section {
+  padding-top: 16px;
+  border-top: 1px solid #ece2dc;
+}
+
+.admin-project-modal__section h3 {
+  margin: 0;
+  color: #554742;
+  font-size: 0.8rem;
+}
+
+.admin-project-modal__milestones {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-project-modal__milestones > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-project-modal__milestones span {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-project-modal__milestones strong {
+  color: #4b3e39;
+  font-size: 0.72rem;
+}
+
+.admin-project-modal__milestones small {
+  color: #8d7e77;
+  font-size: 0.62rem;
+}
+
 .admin-project-detail h3,
 .admin-user-detail h3 {
   margin: 14px 0 7px;
@@ -938,6 +1215,106 @@
   font-weight: 800;
 }
 
+.admin-edit-profile-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  margin: 0 0 14px;
+  padding: 0 11px;
+  color: #6e3d42;
+  border: 1px solid #dbcac5;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.58rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-managed-profile-form {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid #e9e1dc;
+  border-radius: 10px;
+  background: #fbf8f5;
+}
+
+.admin-managed-profile-form__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-managed-profile-form__heading h4 {
+  margin: 0 0 4px;
+  color: #4e403c;
+  font-size: 0.72rem;
+}
+
+.admin-managed-profile-form__heading p {
+  font-size: 0.58rem;
+}
+
+.admin-managed-profile-form__heading button {
+  padding: 0;
+  color: #6e3d42;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.58rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-managed-profile-form__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-managed-profile-form label {
+  display: grid;
+  gap: 5px;
+  color: #675a56;
+  font-size: 0.57rem;
+  font-weight: 800;
+}
+
+.admin-managed-profile-form input,
+.admin-managed-profile-form textarea {
+  width: 100%;
+  padding: 9px 10px;
+  color: #443a37;
+  border: 1px solid #ded6d1;
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  outline: none;
+}
+
+.admin-managed-profile-form textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+.admin-managed-profile-form :is(input, textarea):focus {
+  border-color: #9a6a6f;
+  box-shadow: 0 0 0 3px rgba(115, 55, 61, 0.08);
+}
+
+.admin-managed-profile-form__wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 560px) {
+  .admin-managed-profile-form__fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-progress-list {
   display: grid;
   gap: 14px;
@@ -961,6 +1338,24 @@
   margin: 8px 0 4px;
   color: #443733;
   font-size: 0.8rem;
+}
+
+.admin-progress-project-title {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-progress-project-title:hover,
+.admin-progress-project-title:focus-visible {
+  color: #703b40;
+  text-decoration: underline;
+  outline: none;
 }
 
 .admin-progress-list header p {
@@ -1022,6 +1417,8 @@
 .admin-milestone-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 7px;
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import SupabaseMessages from './SupabaseMessages'
+import { rankFacultyForIdea } from './lib/facultyMatching'
 import {
   Bell,
   CalendarDays,
@@ -83,6 +84,21 @@ function formatDeadline(dateValue) {
     month: 'long',
     day: 'numeric',
   })
+}
+
+// Keep Supabase's internal UUID private while giving every existing and new
+// project a short, consistent reference that is safe to show to students.
+function getProjectCode(projectOrId) {
+  const id = typeof projectOrId === 'object'
+    ? projectOrId?.id
+    : projectOrId
+  const value = String(id || '').trim()
+
+  if (!value) return 'Project'
+
+  return value.toUpperCase().startsWith('PRJ-')
+    ? value
+    : `PRJ-${value.slice(0, 8)}`
 }
 
 function getRemainingSlots(project) {
@@ -203,9 +219,64 @@ function Sidebar({
   )
 }
 
+function StudentNotificationBell({ profile, onNavigate }) {
+  const [notifications, setNotifications] = useState([])
+  const [isOpen, setIsOpen] = useState(false)
+
+  useEffect(() => {
+    async function loadNotifications() {
+      if (!profile?.id) return
+
+      const { data: messages } = await supabase
+        .from('direct_messages')
+        .select('id, sender_id, body, attachment_name, created_at')
+        .eq('recipient_id', profile.id)
+        .is('read_at', null)
+        .order('created_at', { ascending: false })
+        .limit(6)
+
+      const senderIds = [...new Set((messages || []).map((message) => message.sender_id))]
+      const { data: senders } = senderIds.length
+        ? await supabase.from('message_directory').select('id, full_name').in('id', senderIds)
+        : { data: [] }
+      const names = new Map((senders || []).map((sender) => [sender.id, sender.full_name]))
+      setNotifications((messages || []).map((message) => ({
+        ...message,
+        sender_name: names.get(message.sender_id) || 'University user',
+      })))
+    }
+
+    loadNotifications()
+    const refreshId = window.setInterval(loadNotifications, 12000)
+    return () => window.clearInterval(refreshId)
+  }, [profile?.id])
+
+  return (
+    <div className="header-notifications">
+      <button className="header-icon-button" type="button" aria-label="Notifications" onClick={() => setIsOpen((current) => !current)}>
+        <Bell size={20} />
+        {notifications.length > 0 && <span className="notification-dot" />}
+      </button>
+      {isOpen && (
+        <div className="notification-menu" role="dialog" aria-label="Notifications">
+          <header><strong>Notifications</strong>{notifications.length > 0 && <span>{notifications.length} new</span>}</header>
+          {notifications.length ? notifications.map((notification) => (
+            <button key={notification.id} type="button" onClick={() => { setIsOpen(false); onNavigate('messages') }}>
+              <span className="notification-menu__avatar">{getInitials(notification.sender_name)}</span>
+              <span><strong>{notification.sender_name}</strong><small>Message · {notification.body || `Attachment: ${notification.attachment_name || 'file'}`}</small></span>
+              <time>{new Date(notification.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+            </button>
+          )) : <p>No new notifications.</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DashboardHeader({
   activeTab,
   profile,
+  onNavigate,
 }) {
   const current = NAV_ITEMS.find(
     (item) => item.id === activeTab
@@ -226,14 +297,7 @@ function DashboardHeader({
       </div>
 
       <div className="dashboard-header__actions">
-        <button
-          className="header-icon-button"
-          type="button"
-          aria-label="Notifications"
-        >
-          <Bell size={20} />
-          <span className="notification-dot" />
-        </button>
+        <StudentNotificationBell profile={profile} onNavigate={onNavigate} />
 
         <div className="student-identity">
           <span className="student-avatar">
@@ -291,7 +355,7 @@ function OpportunityCard({
     <article className="opportunity-card">
       <div className="opportunity-card__top">
         <span className="project-id">
-          {opportunity.id}
+          {getProjectCode(opportunity)}
         </span>
 
         {typeof opportunity.match === 'number' ? (
@@ -442,7 +506,7 @@ function ProjectDetailsModal({
         <div className="project-modal__heading">
           <div className="opportunity-card__top">
             <span className="project-id">
-              {project.id} · {project.type}
+              {getProjectCode(project)} · {project.type}
             </span>
 
             {typeof project.match === 'number' ? (
@@ -635,6 +699,8 @@ function Overview({
   appliedProjectIds,
   applyingProjectIds,
   applicationCount,
+  projectCount,
+  onNavigate,
 }) {
   const firstName = getFirstName(
     profile?.full_name
@@ -666,7 +732,7 @@ function Overview({
       </section>
 
       <div className="metric-grid">
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('opportunities')}>
           <span className="metric-icon metric-icon--gold">
             <Sparkles />
           </span>
@@ -684,9 +750,9 @@ function Overview({
           <small>
             Loaded from the research database
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('applications')}>
           <span className="metric-icon metric-icon--blue">
             <ClipboardList />
           </span>
@@ -704,22 +770,22 @@ function Overview({
           <small>
             Track every submission
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('projects')}>
           <span className="metric-icon metric-icon--green">
             <FolderKanban />
           </span>
 
           <div>
-            <strong>1</strong>
-            <span>Active project</span>
+            <strong>{projectCount}</strong>
+            <span>Active projects</span>
           </div>
 
           <small>
-            Project tracking demo
+            Track your research progress
           </small>
-        </article>
+        </button>
       </div>
 
       <section className="content-card">
@@ -809,10 +875,10 @@ function Profile({
   const createDraft = (
     sourceProfile
   ) => ({
-    full_name: sourceProfile?.full_name || '',
     headline: sourceProfile?.headline || '',
     bio: sourceProfile?.bio || '',
     major: sourceProfile?.major || '',
+    department: sourceProfile?.department || '',
     year_of_study: sourceProfile?.year_of_study || '',
     gpa: sourceProfile?.gpa ?? '',
     expected_graduation_year:
@@ -1063,12 +1129,6 @@ function Profile({
     setSaveError('')
     setSaveSuccess(false)
 
-    if (!draft.full_name.trim()) {
-      setSaveError('Student name is required.')
-      setIsSaving(false)
-      return
-    }
-
     const gpa = draft.gpa === '' ? null : Number(draft.gpa)
     const graduationYear =
       draft.expected_graduation_year === ''
@@ -1123,10 +1183,10 @@ function Profile({
     }
 
     const updates = {
-      full_name: draft.full_name.trim(),
       headline: draft.headline.trim(),
       bio: draft.bio.trim(),
       major: draft.major.trim(),
+      department: draft.department.trim(),
       year_of_study: draft.year_of_study.trim(),
       gpa,
       expected_graduation_year: graduationYear,
@@ -1505,19 +1565,7 @@ function Profile({
           </span>
 
           <div>
-            {isEditing ? (
-              <label className="profile-name-field">
-                Student name
-                <input
-                  value={draft.full_name}
-                  onChange={(event) =>
-                    setDraft({ ...draft, full_name: event.target.value })
-                  }
-                />
-              </label>
-            ) : (
-              <h3>{profile?.full_name || 'Student'}</h3>
-            )}
+            <h3>{profile?.full_name || 'Student'}</h3>
 
             <p className="profile-headline">
               {profile?.headline ||
@@ -1614,7 +1662,11 @@ function Profile({
           <label>
             Department
 
-            <input value={profile?.department || ''} readOnly />
+            <input
+              value={isEditing ? draft.department : profile?.department || ''}
+              readOnly={!isEditing}
+              onChange={(event) => setDraft({ ...draft, department: event.target.value })}
+            />
           </label>
         </div>
 
@@ -2259,6 +2311,7 @@ function Profile({
 }
 
 function Opportunities({
+  profile,
   opportunities,
   onViewProject,
   onApply,
@@ -2421,6 +2474,95 @@ function Opportunities({
       </section>
     </div>
   )
+}
+
+function FindFaculty({ profile, idea, onContact }) {
+  const [faculty, setFaculty] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [department, setDepartment] = useState('')
+  const [interest, setInterest] = useState('')
+  const [selected, setSelected] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const { data, error: loadError } = await supabase.rpc('get_faculty_directory')
+      if (cancelled) return
+      if (loadError) setError('Faculty profiles could not be loaded. Please try again later.')
+      else setFaculty(data || [])
+      setLoading(false)
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!selected) return
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setSelected(null) }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [selected])
+
+  const departments = [...new Set(faculty.map((person) => person.department).filter(Boolean))].sort()
+  const interests = [...new Set(faculty.flatMap((person) => person.research_interests || []))].sort()
+  // Temporary deterministic matching; replace this scoring with AI results later.
+  const normalize = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  const studentInterests = [...new Set((profile?.research_interests || []).map(normalize).filter(Boolean))]
+  const studentSkills = [...new Set((profile?.skills || []).map(normalize).filter(Boolean))]
+  const studentDepartment = normalize(profile?.department)
+  const hasMatchingProfile = studentInterests.length > 0 || studentSkills.length > 0 || Boolean(studentDepartment)
+  const rankedFaculty = idea ? rankFacultyForIdea(faculty, idea) : faculty.map((person) => {
+    const facultyTopics = new Set([...(person.research_interests || []), ...(person.skills || [])].map(normalize).filter(Boolean))
+    const matchedInterests = studentInterests.filter((item) => facultyTopics.has(item))
+    const matchedSkills = studentSkills.filter((item) => facultyTopics.has(item))
+    const sameDepartment = Boolean(studentDepartment && studentDepartment === normalize(person.department))
+    const possible = studentInterests.length * 3 + studentSkills.length * 2 + (studentDepartment ? 1 : 0)
+    const score = matchedInterests.length * 3 + matchedSkills.length * 2 + (sameDepartment ? 1 : 0)
+    return { ...person, score, matchPercent: possible ? Math.round(score / possible * 100) : null, matchedInterests, matchedSkills, sameDepartment }
+  }).sort((a, b) => b.score - a.score || (a.full_name || '').localeCompare(b.full_name || '') || String(a.id).localeCompare(String(b.id)))
+    .map((person, index) => ({ ...person, rank: index + 1 }))
+  const visible = rankedFaculty.filter((person) =>
+    (!department || person.department === department) &&
+    (!interest || (person.research_interests || []).includes(interest)) &&
+    `${person.full_name || ''} ${person.department || ''} ${(person.research_interests || []).join(' ')} ${(person.skills || []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())
+  )
+
+  return <section className="content-card">
+    <SectionHeading eyebrow="Idea Portal" title="Find faculty" action={<span className="count-pill">{faculty.length} faculty members</span>} />
+    <p className="faculty-directory-intro">Discover potential supervisors and explore their research interests.</p>
+    <p className="faculty-ranking-announcement">{idea ? `Recommendations for “${idea.title || 'Your draft idea'}”, based on topic overlap with faculty research interests, expertise, and biography.` : 'Write an idea or choose one of your submitted ideas to get faculty recommendations. You can also browse faculty below.'}</p>
+    {idea && !rankedFaculty.some((person) => person.score > 0) && <p className="faculty-directory-intro">No matching expertise found yet. Add more specific topics to your idea or browse faculty profiles.</p>}
+    <div className="search-toolbar faculty-directory-toolbar">
+      <label className="dashboard-search"><Search size={19} /><input aria-label="Search faculty" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, research topic, or expertise" /></label>
+      <select aria-label="Faculty department" value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">All departments</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
+      <select aria-label="Faculty research interest" value={interest} onChange={(event) => setInterest(event.target.value)}><option value="">All research interests</option>{interests.map((item) => <option key={item}>{item}</option>)}</select>
+    </div>
+    {loading ? <p role="status">Loading faculty profiles…</p> : error ? <p role="alert">{error}</p> : <>
+      <p className="faculty-directory-intro" role="status">{visible.length} faculty members · {idea ? 'Ranked by idea relevance; ties ordered alphabetically' : hasMatchingProfile ? 'Ranked by profile match; ties ordered alphabetically' : 'Listed alphabetically'}</p>
+      <div className="opportunity-grid">
+        {visible.map((person) => <article className="faculty-directory-card" key={person.id}>
+          {(idea || hasMatchingProfile) && <div className="faculty-match-heading"><span className="count-pill">#{person.rank}</span><strong>{idea ? person.score > 0 ? 'Relevant expertise' : 'No topic overlap' : `${person.matchPercent}% profile overlap`}</strong></div>}
+          <div className="faculty-directory-identity"><span className="faculty-directory-avatar">{getInitials(person.full_name)}</span><div><h3>{person.full_name || 'Faculty member'}</h3><p>{person.department || 'Department not specified'}</p></div></div>
+          <h4>Research interests</h4>
+          <div className="tag-list">{person.research_interests?.length ? person.research_interests.map((item) => <span key={item}>{item}</span>) : <span>Not added yet</span>}</div>
+          {idea ? <p className="faculty-match-reason">{person.matchedTopics.length ? `Relevant topics: ${person.matchedTopics.join(', ')}` : person.matchedWords.length ? `Matching keywords: ${person.matchedWords.join(', ')}` : 'No matching topics in the available profile.'}</p> : hasMatchingProfile && <p className="faculty-match-reason">{[
+            person.matchedInterests.length ? `Shared interests: ${person.matchedInterests.join(', ')}` : '',
+            person.matchedSkills.length ? `Shared skills: ${person.matchedSkills.join(', ')}` : '',
+            person.sameDepartment ? 'Same department' : '',
+          ].filter(Boolean).join(' · ') || 'No shared profile details yet.'}</p>}
+          <button className="text-button" type="button" onClick={() => setSelected(person)}>View Profile <ChevronRight size={15} /></button>
+          <button className="text-button" type="button" onClick={() => onContact(person, idea)}><Mail size={15} /> {idea ? 'Invite to discuss idea' : 'Message faculty'}</button>
+        </article>)}
+        {!visible.length && <div className="empty-state"><UsersRound size={30} /><h3>{faculty.length ? 'No faculty match your search' : 'No faculty profiles available yet'}</h3><p>{faculty.length ? 'Try another keyword or change your filters.' : 'Faculty members will appear here as their profiles become available.'}</p></div>}
+      </div>
+    </>}
+    {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="project-modal" role="dialog" aria-modal="true" aria-labelledby="faculty-directory-title" onClick={(event) => event.stopPropagation()}>
+      <div className="project-modal__heading"><button className="faculty-directory-close" type="button" autoFocus aria-label="Close faculty profile" onClick={() => setSelected(null)}><X size={20} /></button><span>Faculty profile</span><h2 id="faculty-directory-title">{selected.full_name}</h2><p>{selected.department || 'Department not specified'}</p></div>
+      <div className="project-modal__body faculty-directory-details"><h3>Research biography</h3><p>{selected.research_experience || 'No biography added yet.'}</p><h3>Research interests</h3><div className="tag-list">{(selected.research_interests || []).map((item) => <span key={item}>{item}</span>)}{!selected.research_interests?.length && <p>Not added yet.</p>}</div><h3>Areas of expertise</h3><div className="tag-list">{(selected.skills || []).map((item) => <span key={item}>{item}</span>)}{!selected.skills?.length && <p>Not added yet.</p>}</div></div>
+    </section></div>}
+  </section>
 }
 
 function Applications({
@@ -2701,111 +2843,50 @@ function ProjectInvitations({ profile }) {
   )
 }
 
-function Projects({ profile }) {
-  const milestones = [
-    [
-      'Literature review',
-      'Completed',
-      'Apr 18',
-    ],
-    [
-      'Dataset preparation',
-      'Completed',
-      'Apr 25',
-    ],
-    [
-      'Model development',
-      'In progress',
-      'May 12',
-    ],
-    [
-      'Final evaluation',
-      'Upcoming',
-      'May 28',
-    ],
-  ]
-
-  return (
-    <div className="dashboard-section">
-      <ProjectInvitations profile={profile} />
-      <section className="content-card project-banner">
-        <div>
-          <span className="project-id">
-            SURE+ 2026
-          </span>
-
-          <h2>
-            Sustainability Analytics Dashboard
-          </h2>
-
-          <p>
-            Supervisor: Dr. Khalid Al Nuaimi
-            · 72% complete
-          </p>
-        </div>
-
-        <div className="project-ring">
-          <strong>72%</strong>
-          <span>Progress</span>
-        </div>
-      </section>
-
-      <section className="content-card">
-        <SectionHeading
-          eyebrow="Project timeline"
-          title="Milestones"
-        />
-
-        <div className="milestone-list">
-          {milestones.map(
-            (
-              [name, status, date],
-              index
-            ) => (
-              <div
-                className="milestone"
-                key={name}
-              >
-                <span
-                  className={
-                    status ===
-                    'Completed'
-                      ? 'milestone__dot is-complete'
-                      : 'milestone__dot'
-                  }
-                >
-                  {status ===
-                  'Completed' ? (
-                    <Check size={14} />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-
-                <div>
-                  <strong>
-                    {name}
-                  </strong>
-
-                  <small>
-                    {status}
-                  </small>
-                </div>
-
-                <time>
-                  <CalendarDays size={15} />
-                  {date}
-                </time>
-              </div>
-            )
-          )}
-        </div>
-      </section>
-    </div>
-  )
+function Projects({ profile, projects, loading, error, onViewProject }) {
+  return <div className="dashboard-section">
+    <ProjectInvitations profile={profile} />
+    <section className="content-card">
+      <SectionHeading eyebrow="Project tracking" title="My projects" />
+      {loading ? <p role="status">Loading your projects...</p> : error ? <p role="alert">{error}</p> : projects.length ?
+        <div className="opportunity-grid">{projects.map((project) => <article className="content-card" key={project.id}>
+          <span className="project-id">{project.program_type || 'Research project'}</span>
+          <h3><button className="project-link" type="button" onClick={() => onViewProject(project)}>{project.title}</button></h3>
+          <p>{project.description || project.abstract || ''}</p>
+          <button className="text-button" type="button" onClick={() => onViewProject(project)}>View details <ChevronRight size={15} /></button>
+        </article>)}</div> :
+        <div className="empty-state"><FolderKanban size={30} /><h3>No active projects yet</h3><p>Your projects will appear here once your applications are accepted.</p></div>}
+    </section>
+  </div>
 }
 
-function Ideas({ profile }) {
+function Ideas({ profile, onOpenConversation }) {
+  const recommendationsRef = useRef(null)
+  const [recommendationIdea, setRecommendationIdea] = useState(null)
+  const [contact, setContact] = useState(null)
+  const [contactBody, setContactBody] = useState('')
+  const [contactError, setContactError] = useState('')
+  const [contactSending, setContactSending] = useState(false)
+
+  function startContact(person, idea) {
+    setContact(person)
+    setContactError('')
+    setContactBody(idea ? `Hello ${person.full_name || 'Doctor'},\n\nI would like to invite you to discuss my research idea: ${idea.title || 'Untitled idea'}.\n\n${idea.description || ''}\n\nWould you be interested in discussing this idea or supervising the research?` : '')
+  }
+
+  async function sendContact(event) {
+    event.preventDefault()
+    if (!profile?.id || !contact || !contactBody.trim() || contactSending) return
+    setContactSending(true)
+    setContactError('')
+    const { error } = await supabase.from('direct_messages').insert({ sender_id: profile.id, recipient_id: contact.id, body: contactBody.trim() })
+    setContactSending(false)
+    if (error) {
+      setContactError('Could not send your message. Please try again.')
+      return
+    }
+    onOpenConversation(contact.id)
+  }
   const [showForm, setShowForm] =
     useState(false)
 
@@ -2839,6 +2920,7 @@ function Ideas({ profile }) {
     title: '',
     category:
       'Artificial Intelligence',
+    custom_category: '',
     description: '',
   })
 
@@ -2851,7 +2933,7 @@ function Ideas({ profile }) {
         .from('research_ideas')
         .select(`
           *,
-          profiles (
+          profiles!research_ideas_student_id_fkey (
             full_name,
             major
           )
@@ -2874,7 +2956,11 @@ function Ideas({ profile }) {
       return
     }
 
-    setIdeas(data || [])
+    const { data: adopters } = await supabase
+      .from('adopted_idea_faculty')
+      .select('idea_id, faculty_name')
+    const facultyNames = (adopters || []).reduce((names, item) => ({ ...names, [String(item.idea_id)]: item.faculty_name }), {})
+    setIdeas((data || []).map((idea) => ({ ...idea, adopter_name: facultyNames[String(idea.id)] || null })))
     setIdeasLoading(false)
   }
 
@@ -2885,9 +2971,14 @@ function Ideas({ profile }) {
   async function submitIdea(event) {
     event.preventDefault()
 
+    const category = draftIdea.category === 'Other'
+      ? draftIdea.custom_category.trim()
+      : draftIdea.category
+
     if (
       !draftIdea.title.trim() ||
-      !draftIdea.description.trim()
+      !draftIdea.description.trim() ||
+      !category
     ) {
       return
     }
@@ -2912,7 +3003,7 @@ function Ideas({ profile }) {
             draftIdea.title.trim(),
 
           category:
-            draftIdea.category,
+            category,
 
           description:
             draftIdea.description.trim(),
@@ -2932,10 +3023,12 @@ function Ideas({ profile }) {
       return
     }
 
+    setRecommendationIdea({ title: draftIdea.title.trim(), description: draftIdea.description.trim(), category })
     setDraftIdea({
       title: '',
       category:
         'Artificial Intelligence',
+      custom_category: '',
       description: '',
     })
 
@@ -3057,6 +3150,9 @@ function Ideas({ profile }) {
                     ...draftIdea,
                     category:
                       event.target.value,
+                    custom_category: event.target.value === 'Other'
+                      ? draftIdea.custom_category
+                      : '',
                   })
                 }
               >
@@ -3093,6 +3189,25 @@ function Ideas({ profile }) {
                 </option>
               </select>
             </label>
+
+            {draftIdea.category === 'Other' && (
+              <label>
+                Other research area
+
+                <input
+                  value={draftIdea.custom_category}
+                  onChange={(event) =>
+                    setDraftIdea({
+                      ...draftIdea,
+                      custom_category: event.target.value,
+                    })
+                  }
+                  placeholder="Enter the research area"
+                  required
+                  autoFocus
+                />
+              </label>
+            )}
 
             <label className="idea-form__description">
               Describe your idea
@@ -3141,6 +3256,15 @@ function Ideas({ profile }) {
           </form>
         </section>
       )}
+
+      {contact && <div className="modal-backdrop" onClick={() => !contactSending && setContact(null)}><section className="project-modal" role="dialog" aria-modal="true" aria-labelledby="idea-contact-title" onClick={(event) => event.stopPropagation()}>
+        <div className="project-modal__heading"><h2 id="idea-contact-title">Message {contact.full_name}</h2></div>
+        <form className="idea-form project-modal__body" onSubmit={sendContact}>
+          <label className="idea-form__description">Invitation or message<textarea autoFocus value={contactBody} onChange={(event) => setContactBody(event.target.value)} required disabled={contactSending} /></label>
+          {contactError && <p role="alert">{contactError}</p>}
+          <div className="idea-form__actions"><button className="outline-button" type="button" disabled={contactSending} onClick={() => setContact(null)}>Cancel</button><button className="primary-dashboard-button" type="submit" disabled={contactSending || !contactBody.trim()}>{contactSending ? 'Sending...' : 'Send message'}</button></div>
+        </form>
+      </section></div>}
 
       <section className="content-card">
         <SectionHeading
@@ -3195,10 +3319,28 @@ function Ideas({ profile }) {
                 <div className="idea-card-footer">
                   <small>
                     <UsersRound size={15} />
-                    Submitted by {idea.profiles?.full_name || 'Student'}
-                    {idea.profiles?.major ? ` · ${idea.profiles.major}` : ''}
+                    Submitted by Student
                   </small>
 
+                  {idea.adopter_name && (
+                    <small className="idea-adopted-by">Adopted by {idea.adopter_name}</small>
+                  )}
+
+                  {idea.student_id && idea.student_id !== profile?.id && (
+                    <button
+                      className="text-button"
+                      type="button"
+                      aria-label={`Message the student who submitted ${idea.title}`}
+                      onClick={() => onOpenConversation(idea.student_id)}
+                    >
+                      <MessageSquare size={15} />
+                      Message
+                    </button>
+                  )}
+
+                  {idea.student_id === profile?.id && (
+                    <button className="text-button" type="button" onClick={() => { setRecommendationIdea(idea); setShowForm(false); window.requestAnimationFrame(() => recommendationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })) }}>Find suitable faculty</button>
+                  )}
                   {idea.student_id === profile?.id && (
                     <button
                       className="idea-delete-button"
@@ -3216,6 +3358,7 @@ function Ideas({ profile }) {
           </div>
         )}
       </section>
+      <div ref={recommendationsRef}><FindFaculty profile={profile} idea={showForm && (draftIdea.title.trim() || draftIdea.description.trim()) ? { ...draftIdea, category: draftIdea.category === 'Other' ? draftIdea.custom_category : draftIdea.category } : recommendationIdea} onContact={startContact} /></div>
     </div>
   )
 }
@@ -3229,6 +3372,8 @@ export default function StudentDashboard({
     studentProfile,
     setStudentProfile,
   ] = useState(profile)
+  const [messageContactId, setMessageContactId] = useState(null)
+  const [messageContactRequest, setMessageContactRequest] = useState(0)
 
   const [
     activeTab,
@@ -3516,6 +3661,9 @@ export default function StudentDashboard({
     )
   }
 
+  const acceptedProjectIds = new Set(applications.filter((item) => item.status === 'Accepted').map((item) => String(item.opportunity_id)))
+  const studentProjects = opportunities.filter((item) => acceptedProjectIds.has(String(item.id)))
+
   const screens = {
     overview: (
       <Overview
@@ -3526,6 +3674,8 @@ export default function StudentDashboard({
         appliedProjectIds={appliedProjectIds}
         applyingProjectIds={applyingProjectIds}
         applicationCount={applications.length}
+        projectCount={studentProjects.length}
+        onNavigate={setActiveTab}
       />
     ),
 
@@ -3538,6 +3688,7 @@ export default function StudentDashboard({
 
     opportunities: (
       <Opportunities
+        profile={studentProfile}
         opportunities={opportunities}
         onViewProject={setSelectedProject}
         onApply={applyToProject}
@@ -3558,15 +3709,16 @@ export default function StudentDashboard({
       />
     ),
 
-    projects: <Projects profile={studentProfile} />,
+    projects: <Projects profile={studentProfile} projects={studentProjects} loading={applicationsLoading} error={applicationsError} onViewProject={setSelectedProject} />,
 
     ideas: (
       <Ideas
         profile={studentProfile}
+        onOpenConversation={(id) => { setMessageContactId(id); setMessageContactRequest((current) => current + 1); setActiveTab('messages') }}
       />
     ),
 
-    messages: <SupabaseMessages profile={studentProfile} />,
+    messages: <SupabaseMessages key={messageContactRequest} profile={studentProfile} initialContactId={messageContactId} />,
   }
 
   return (
@@ -3581,6 +3733,7 @@ export default function StudentDashboard({
         <DashboardHeader
           activeTab={activeTab}
           profile={studentProfile}
+          onNavigate={setActiveTab}
         />
 
         {applicationNotice && (

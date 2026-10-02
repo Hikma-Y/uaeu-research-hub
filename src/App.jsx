@@ -45,12 +45,147 @@ function BrandMark() {
   )
 }
 
+function normalizeUaeuEmail(value) {
+  const identifier = String(value || '').trim()
+  return /^\d{9}$/.test(identifier)
+    ? `${identifier}@uaeu.ac.ae`
+    : identifier
+}
+
+function PasswordResetRequest({ onBack }) {
+  const [status, setStatus] = useState('idle')
+  const [message, setMessage] = useState('')
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    const email = normalizeUaeuEmail(formData.get('identifier'))
+
+    setStatus('loading')
+    setMessage('')
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}${window.location.pathname}`,
+    })
+    setStatus('idle')
+
+    if (error) {
+      console.error('Password reset request error:', error.message)
+      setMessage('We could not send the reset email. Please check your UAEU email or ID and try again.')
+      return
+    }
+
+    setStatus('sent')
+    setMessage('If an account matches this UAEU email or ID, a password-reset link has been sent.')
+  }
+
+  return (
+    <section className="login-card" aria-labelledby="reset-request-title">
+      <div className="login-card__heading">
+        <span className="eyebrow">UAEU Research Hub</span>
+        <h1 id="reset-request-title">Reset your password</h1>
+        <p>Enter your UAEU email or nine-digit ID. We will send a secure password-reset link.</p>
+      </div>
+      <form onSubmit={handleSubmit}>
+        <div className="field-group">
+          <label htmlFor="reset-identifier">UAEU email or ID</label>
+          <div className="input-wrap">
+            <Mail size={19} aria-hidden="true" />
+            <input id="reset-identifier" name="identifier" type="text" autoComplete="username" placeholder="202312345 or name@uaeu.ac.ae" required />
+          </div>
+        </div>
+        {message && <p className={status === 'sent' ? 'auth-form-message is-success' : 'auth-form-message'} role="status">{message}</p>}
+        <button className="primary-button" type="submit" disabled={status === 'loading' || status === 'sent'}>
+          <span>{status === 'loading' ? 'Sending…' : status === 'sent' ? 'Reset email sent' : 'Send reset link'}</span>
+          {status === 'loading' ? <span className="spinner" /> : <ArrowRight size={19} />}
+        </button>
+        <button className="auth-text-button" type="button" onClick={onBack}>Back to sign in</button>
+      </form>
+    </section>
+  )
+}
+
+function PasswordUpdateForm({ onExit }) {
+  const [showPassword, setShowPassword] = useState(false)
+  const [status, setStatus] = useState('idle')
+  const [message, setMessage] = useState('')
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    const password = String(formData.get('password') || '')
+    const confirmation = String(formData.get('confirmation') || '')
+
+    if (password.length < 6) {
+      setMessage('Your new password must contain at least 6 characters.')
+      return
+    }
+    if (password !== confirmation) {
+      setMessage('The passwords do not match.')
+      return
+    }
+
+    setStatus('loading')
+    setMessage('')
+    const { error } = await supabase.auth.updateUser({ password })
+    setStatus('idle')
+
+    if (error) {
+      console.error('Password update error:', error.message)
+      setMessage('This reset link is invalid or has expired. Please request a new one.')
+      return
+    }
+
+    setStatus('complete')
+    setMessage('Your password has been updated. You can now sign in with it.')
+  }
+
+  return (
+    <section className="login-card" aria-labelledby="new-password-title">
+      <div className="login-card__heading">
+        <span className="eyebrow">UAEU Research Hub</span>
+        <h1 id="new-password-title">Choose a new password</h1>
+        <p>Create a new password for your research workspace account.</p>
+      </div>
+      <form onSubmit={handleSubmit}>
+        <div className="field-group">
+          <label htmlFor="new-password">New password</label>
+          <div className="input-wrap">
+            <LockKeyhole size={19} aria-hidden="true" />
+            <input id="new-password" name="password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" minLength={6} required />
+            <button className="icon-button" type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? 'Hide password' : 'Show password'}>
+              {showPassword ? <EyeOff size={19} /> : <Eye size={19} />}
+            </button>
+          </div>
+        </div>
+        <div className="field-group">
+          <label htmlFor="confirm-password">Confirm new password</label>
+          <div className="input-wrap">
+            <LockKeyhole size={19} aria-hidden="true" />
+            <input id="confirm-password" name="confirmation" type={showPassword ? 'text' : 'password'} autoComplete="new-password" minLength={6} required />
+          </div>
+        </div>
+        {message && <p className={status === 'complete' ? 'auth-form-message is-success' : 'auth-form-message'} role="status">{message}</p>}
+        {status === 'complete' ? (
+          <button className="primary-button" type="button" onClick={onExit}>Return to sign in</button>
+        ) : (
+          <button className="primary-button" type="submit" disabled={status === 'loading'}>
+            <span>{status === 'loading' ? 'Updating…' : 'Update password'}</span>
+            {status === 'loading' ? <span className="spinner" /> : <ArrowRight size={19} />}
+          </button>
+        )}
+      </form>
+    </section>
+  )
+}
+
 function LoginForm() {
   const [showPassword, setShowPassword] =
     useState(false)
 
   const [status, setStatus] =
     useState('idle')
+  const [showResetRequest, setShowResetRequest] =
+    useState(false)
 
   async function handleSubmit(event) {
     event.preventDefault()
@@ -60,7 +195,9 @@ function LoginForm() {
     const formData =
       new FormData(event.currentTarget)
 
-    const email = formData.get('email')
+    const email = normalizeUaeuEmail(
+      formData.get('identifier')
+    )
     const password =
       formData.get('password')
 
@@ -98,6 +235,14 @@ function LoginForm() {
     setStatus('idle')
   }
 
+  if (showResetRequest) {
+    return (
+      <PasswordResetRequest
+        onBack={() => setShowResetRequest(false)}
+      />
+    )
+  }
+
   return (
     <section
       className="login-card"
@@ -120,7 +265,7 @@ function LoginForm() {
 
       <form onSubmit={handleSubmit}>
         <div className="field-group">
-          <label htmlFor="email">
+          <label htmlFor="identifier">
             UAEU email or ID
           </label>
 
@@ -131,11 +276,12 @@ function LoginForm() {
             />
 
             <input
-              id="email"
-              name="email"
+              id="identifier"
+              name="identifier"
               type="text"
               autoComplete="username"
-              placeholder="name@uaeu.ac.ae"
+              placeholder="202312345 or name@uaeu.ac.ae"
+              inputMode="email"
               required
             />
           </div>
@@ -147,9 +293,13 @@ function LoginForm() {
               Password
             </label>
 
-            <a href="#forgot-password">
+            <button
+              className="auth-link-button"
+              type="button"
+              onClick={() => setShowResetRequest(true)}
+            >
               Forgot password?
-            </a>
+            </button>
           </div>
 
           <div className="input-wrap">
@@ -282,6 +432,17 @@ export default function App() {
     setProfileError,
   ] = useState('')
 
+  const [passwordRecovery, setPasswordRecovery] = useState(
+    () => window.location.hash.includes('type=recovery')
+  )
+
+  useEffect(() => {
+    // Clear the old placeholder link left behind by earlier versions.
+    if (window.location.hash === '#forgot-password') {
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
+  }, [])
+
   useEffect(() => {
     async function checkSession() {
       const { data, error } =
@@ -304,8 +465,12 @@ export default function App() {
       data: { subscription },
     } =
       supabase.auth.onAuthStateChange(
-        (_event, newSession) => {
+        (event, newSession) => {
           setSession(newSession)
+
+          if (event === 'PASSWORD_RECOVERY') {
+            setPasswordRecovery(true)
+          }
 
           /*
            * Clear the previous user's
@@ -387,6 +552,12 @@ export default function App() {
     }
   }
 
+  async function exitPasswordRecovery() {
+    await supabase.auth.signOut()
+    setPasswordRecovery(false)
+    window.history.replaceState({}, document.title, window.location.pathname)
+  }
+
   /*
    * Supabase is still checking whether
    * a previous authenticated session
@@ -403,6 +574,19 @@ export default function App() {
           }}
         >
           <p>Checking session...</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (passwordRecovery) {
+    return (
+      <main className="page-shell">
+        <header className="topbar">
+          <BrandMark />
+        </header>
+        <div className="form-panel auth-recovery-panel">
+          <PasswordUpdateForm onExit={exitPasswordRecovery} />
         </div>
       </main>
     )

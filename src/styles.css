@@ -323,13 +323,25 @@ a {
   justify-content: space-between;
 }
 
-.label-row a {
+.label-row a,
+.auth-link-button {
   color: var(--uaeu-green);
   font-size: 0.79rem;
   text-decoration: none;
 }
 
-.label-row a:hover {
+.auth-link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.79rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.label-row a:hover,
+.auth-link-button:hover {
   text-decoration: underline;
 }
 
@@ -500,6 +512,42 @@ a {
   margin-top: 17px;
   color: #82908b;
   font-size: 0.74rem;
+}
+
+.auth-form-message {
+  margin: -4px 0 16px;
+  color: #a34848;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.auth-form-message.is-success {
+  color: #39725a;
+}
+
+.auth-text-button {
+  width: 100%;
+  margin-top: 16px;
+  padding: 0;
+  color: var(--uaeu-green);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-text-button:hover {
+  text-decoration: underline;
+}
+
+.auth-recovery-panel {
+  width: min(100%, 620px);
+  min-height: calc(100vh - 86px);
+  margin: 0 auto;
+  display: grid;
+  place-items: center;
 }
 
 .login-card__footer {

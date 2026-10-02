@@ -85,6 +85,7 @@ function getInitials(name) {
  */
 function createFacultyDraft(profile) {
   return {
+    department: profile?.department || '',
     bio:
       profile?.research_experience || '',
 
@@ -194,9 +195,118 @@ function FacultySidebar({
   )
 }
 
+function MessageNotificationBell({ profile, onNavigate }) {
+  const [notifications, setNotifications] = useState([])
+  const [isOpen, setIsOpen] = useState(false)
+
+  useEffect(() => {
+    async function loadNotifications() {
+      if (!profile?.id) return
+
+      const [messagesResult, applicationsResult, announcementsResult] = await Promise.all([
+        supabase
+          .from('direct_messages')
+          .select('id, sender_id, body, attachment_name, created_at')
+          .eq('recipient_id', profile.id)
+          .is('read_at', null)
+          .order('created_at', { ascending: false })
+          .limit(6),
+        supabase
+          .from('faculty_project_applications')
+          .select('id, student_name, project_title, created_at')
+          .eq('status', 'Submitted')
+          .order('created_at', { ascending: false })
+          .limit(6),
+        supabase
+          .from('announcements')
+          .select('id, title, message, published_at, audience')
+          .eq('is_active', true)
+          .in('audience', ['everyone', 'faculty'])
+          .order('published_at', { ascending: false })
+          .limit(4),
+      ])
+
+      const messages = messagesResult.data || []
+      const senderIds = [...new Set(messages.map((message) => message.sender_id))]
+      const { data: senders } = senderIds.length
+        ? await supabase.from('message_directory').select('id, full_name').in('id', senderIds)
+        : { data: [] }
+      const senderNames = new Map((senders || []).map((sender) => [sender.id, sender.full_name]))
+
+      const messageNotifications = messages.map((message) => ({
+        id: `message-${message.id}`,
+        kind: 'Message',
+        title: senderNames.get(message.sender_id) || 'University user',
+        preview: message.body || `Attachment: ${message.attachment_name || 'file'}`,
+        created_at: message.created_at,
+        target: 'messages',
+      }))
+      const applicationNotifications = (applicationsResult.data || []).map((application) => ({
+        id: `application-${application.id}`,
+        kind: 'Application',
+        title: `New application for ${application.project_title || 'your project'}`,
+        preview: application.student_name || 'Student applicant',
+        created_at: application.created_at,
+        target: 'applications',
+      }))
+      const announcementNotifications = (announcementsResult.data || []).map((announcement) => ({
+        id: `announcement-${announcement.id}`,
+        kind: 'Announcement',
+        title: announcement.title,
+        preview: announcement.message,
+        created_at: announcement.published_at,
+        target: 'overview',
+      }))
+
+      setNotifications([...messageNotifications, ...applicationNotifications, ...announcementNotifications]
+        .sort((first, second) => new Date(second.created_at) - new Date(first.created_at))
+        .slice(0, 10))
+    }
+
+    loadNotifications()
+    const refreshId = window.setInterval(loadNotifications, 12000)
+    return () => window.clearInterval(refreshId)
+  }, [profile?.id])
+
+  return (
+    <div className="header-notifications">
+      <button
+        className="header-icon-button"
+        type="button"
+        aria-label={`Notifications${notifications.length ? ` (${notifications.length} new)` : ''}`}
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <Bell size={20} />
+        {notifications.length > 0 && <span className="notification-dot" />}
+      </button>
+
+      {isOpen && (
+        <div className="notification-menu" role="dialog" aria-label="Notifications">
+          <header><strong>Notifications</strong>{notifications.length > 0 && <span>{notifications.length} new</span>}</header>
+          {notifications.length ? notifications.map((notification) => (
+            <button
+              key={notification.id}
+              type="button"
+              onClick={() => {
+                setIsOpen(false)
+                onNavigate(notification.target)
+              }}
+            >
+              <span className="notification-menu__avatar">{notification.kind === 'Message' ? getInitials(notification.title) : notification.kind[0]}</span>
+              <span><strong>{notification.title}</strong><small>{notification.kind} · {notification.preview}</small></span>
+              <time>{new Date(notification.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+            </button>
+          )) : <p>No new messages.</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function FacultyHeader({
   activeTab,
   profile,
+  onNavigate,
 }) {
   const current =
     FACULTY_NAV.find(
@@ -217,14 +327,7 @@ function FacultyHeader({
       </div>
 
       <div className="dashboard-header__actions">
-        <button
-          className="header-icon-button"
-          type="button"
-          aria-label="Notifications"
-        >
-          <Bell size={20} />
-          <span className="notification-dot" />
-        </button>
+        <MessageNotificationBell profile={profile} onNavigate={onNavigate} />
 
         <div className="student-identity">
           <span className="student-avatar">
@@ -271,8 +374,15 @@ function Heading({
 function Overview({
   projects,
   candidates,
+  projectsLoading,
+  projectsError,
+  applicationsLoading,
+  applicationsError,
   onNavigate,
+  onViewProject,
 }) {
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+
   const openProjects =
     projects.filter(
       (project) =>
@@ -283,8 +393,11 @@ function Overview({
   const pending =
     candidates.filter(
       (candidate) =>
-        candidate.status === 'Pending'
+        candidate.status === 'Submitted'
     ).length
+
+  const projectCount = (count) => projectsLoading ? 'Loading…' : projectsError ? 'Unavailable' : count
+  const applicationCount = (count) => applicationsLoading ? 'Loading…' : applicationsError ? 'Unavailable' : count
 
   return (
     <div className="dashboard-section">
@@ -315,14 +428,14 @@ function Overview({
       </section>
 
       <div className="metric-grid faculty-metrics">
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('projects')}>
           <span className="metric-icon metric-icon--gold">
             <BriefcaseBusiness />
           </span>
 
           <div>
             <strong>
-              {openProjects}
+              {projectCount(openProjects)}
             </strong>
 
             <span>
@@ -331,18 +444,18 @@ function Overview({
           </div>
 
           <small>
-            {projects.length} total research postings
+            {projectsLoading ? 'Loading research postings…' : projectsError || `${projects.length} total research postings`}
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('applications')}>
           <span className="metric-icon metric-icon--blue">
             <UsersRound />
           </span>
 
           <div>
             <strong>
-              {pending}
+              {applicationCount(pending)}
             </strong>
 
             <span>
@@ -351,11 +464,11 @@ function Overview({
           </div>
 
           <small>
-            Candidate decisions awaiting you
+            {applicationsError || 'Candidate decisions awaiting you'}
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('projects')}>
           <span className="metric-icon metric-icon--green">
             <Sparkles />
           </span>
@@ -373,7 +486,7 @@ function Overview({
           <small>
             Recommendation algorithm not connected yet
           </small>
-        </article>
+        </button>
       </div>
 
       <section className="content-card">
@@ -407,10 +520,16 @@ function Overview({
                     project.id ===
                     candidate.projectId
                 )}
+                onViewStudent={setSelectedStudentId}
+                onViewProject={onViewProject}
               />
             )
           )}
         </div>
+        <StudentProfileDialog
+          studentId={selectedStudentId}
+          onClose={() => setSelectedStudentId(null)}
+        />
       </section>
     </div>
   )
@@ -539,6 +658,7 @@ function FacultyProfile({
        * We intentionally do NOT send updated_at here.
        */
       const updates = {
+        department: draft.department.trim(),
         research_experience:
           draft.bio.trim(),
 
@@ -710,6 +830,30 @@ function FacultyProfile({
           setErrorMessage('')
         }} />}
 
+        <h4 className="faculty-profile-section-title">Academic details</h4>
+        <div className="faculty-profile-fields faculty-profile-fields--academic">
+          <label>
+            UAEU email
+            <input value={profile?.email || ''} readOnly />
+          </label>
+          <label>
+            University ID
+            <input
+              value={profile?.university_id || ''}
+              readOnly
+            />
+          </label>
+          <label>
+            Department
+            <input
+              value={draft.department}
+              readOnly={!editing || saving}
+              onChange={(event) => setDraft({ ...draft, department: event.target.value })}
+            />
+          </label>
+        </div>
+
+        <h4 className="faculty-profile-section-title">Research background</h4>
         <div className="faculty-profile-fields">
           <label>
             Research biography
@@ -821,9 +965,12 @@ function FacultyProfile({
 function FacultyProjects({
   profile,
   projects,
+  applications,
   loading,
   error,
   onProjectsChanged,
+  selectedProjectId,
+  onProjectOpened,
 }) {
   const [showForm, setShowForm] =
     useState(false)
@@ -848,9 +995,20 @@ function FacultyProjects({
   const [formSuccess, setFormSuccess] = useState('')
   const [rankingProject, setRankingProject] = useState(null)
   const [rankedStudents, setRankedStudents] = useState([])
+  const [studentRankingQuery, setStudentRankingQuery] = useState('')
   const [selectedStudentIds, setSelectedStudentIds] = useState([])
   const [rankingLoading, setRankingLoading] = useState(false)
   const [inviteNotice, setInviteNotice] = useState('')
+  const [selectedProject, setSelectedProject] = useState(null)
+  const [groupChatNotice, setGroupChatNotice] = useState('')
+  const [creatingGroupChat, setCreatingGroupChat] = useState(false)
+
+  const normalizedRankingQuery = studentRankingQuery.trim().toLowerCase()
+  const filteredRankedStudents = rankedStudents
+    .map((student, index) => ({ student, rank: index + 1 }))
+    .filter(({ student }) =>
+      (student.full_name || '').toLowerCase().includes(normalizedRankingQuery)
+    )
 
   function createEmptyDraft() {
     return {
@@ -903,6 +1061,16 @@ function FacultyProjects({
     setFormSuccess('')
     setShowForm(true)
   }
+
+  useEffect(() => {
+    if (!selectedProjectId) return
+
+    const project = projects.find((item) => item.id === selectedProjectId)
+    if (!project) return
+
+    setSelectedProject(project)
+    onProjectOpened?.()
+  }, [selectedProjectId, projects])
 
   async function saveProject(event) {
     event.preventDefault()
@@ -984,7 +1152,7 @@ function FacultyProjects({
 
   async function deleteProject(project) {
     if (!window.confirm(`Remove “${project.title}”? This cannot be undone.`)) {
-      return
+      return false
     }
 
     setFormError('')
@@ -998,14 +1166,31 @@ function FacultyProjects({
     if (deleteError) {
       console.error('Project delete error:', deleteError.message)
       setFormError(deleteError.message || 'Could not remove the project.')
-      return
+      return false
     }
 
     await onProjectsChanged()
     setFormSuccess('Project removed.')
+    return true
+  }
+
+  async function createProjectGroupChat(project) {
+    setCreatingGroupChat(true)
+    setGroupChatNotice('')
+    const { error: groupError } = await supabase.rpc('create_project_group_chat', {
+      p_opportunity_id: project.id,
+    })
+    setCreatingGroupChat(false)
+
+    if (groupError) {
+      setGroupChatNotice(groupError.message || 'Could not create the project group chat.')
+      return
+    }
+    setGroupChatNotice('Group chat created. Accepted students have been invited.')
   }
 
   async function openStudentRanking(project) {
+    if (rankingProject?.id !== project.id) setStudentRankingQuery('')
     setRankingProject(project)
     setRankedStudents([])
     setSelectedStudentIds([])
@@ -1054,34 +1239,7 @@ function FacultyProjects({
     setInviteNotice(`${selectedStudentIds.length} invitation${selectedStudentIds.length === 1 ? '' : 's'} sent.`)
   }
 
-  return (
-    <div className="dashboard-section">
-      <section className="content-card">
-        <Heading
-          eyebrow="Research portfolio"
-          title="My research projects"
-          action={
-            <button
-              className="primary-dashboard-button faculty-create-button"
-              type="button"
-              onClick={() => (showForm ? closeForm() : startCreatingProject())}
-            >
-              {showForm ? (
-                <>
-                  <X size={15} />
-                  Close form
-                </>
-              ) : (
-                <>
-                  <Plus size={15} />
-                  Create project
-                </>
-              )}
-            </button>
-          }
-        />
-
-        {showForm && (
+  const projectForm = (showForm && (
           <form
             className="faculty-project-form"
             onSubmit={saveProject}
@@ -1282,7 +1440,102 @@ function FacultyProjects({
               </button>
             </div>
           </form>
-        )}
+        ))
+  const rankingPanel = (rankingProject && (
+          <section className="faculty-ranking-panel">
+            <Heading
+              eyebrow="Pre-publication invitations"
+              title={`Students ranked by GPA for ${rankingProject.title}`}
+              action={<button className="text-button" type="button" onClick={() => setRankingProject(null)}>Close</button>}
+            />
+            <p className="faculty-ranking-note">This temporary ranking uses GPA only. It can later be replaced by the matching algorithm score.</p>
+            <label className="dashboard-search faculty-ranking-search">
+              <Search size={18} aria-hidden="true" />
+              <input
+                type="search"
+                value={studentRankingQuery}
+                onChange={(event) => setStudentRankingQuery(event.target.value)}
+                placeholder="Search students by name"
+                aria-label="Search ranked students by name"
+              />
+            </label>
+            {!rankingLoading && rankedStudents.length > 0 && (
+              <p className="faculty-ranking-note" role="status">
+                Showing {filteredRankedStudents.length} of {rankedStudents.length} students · {selectedStudentIds.length} selected
+              </p>
+            )}
+            {rankingLoading ? <p>Loading students...</p> : !rankedStudents.length ? <p>No active student profiles are available yet.</p> : !filteredRankedStudents.length ? <p>No students match your search. Try another name.</p> : (
+              <div className="faculty-ranking-list">
+                {filteredRankedStudents.map(({ student, rank }) => (
+                  <label className="faculty-ranking-row" key={student.student_id}>
+                    <input type="checkbox" checked={selectedStudentIds.includes(student.student_id)} onChange={() => toggleStudent(student.student_id)} disabled={student.invitation_status === 'Accepted'} />
+                    <strong>#{rank}</strong>
+                    <span className="candidate-avatar">{getInitials(student.full_name)}</span>
+                    <span><b>{student.full_name || 'Student'}</b><small>{student.major || student.department || 'Academic details not provided'}</small></span>
+                    <em>GPA {student.gpa ?? '—'}</em>
+                    <small>{student.invitation_status || 'Not invited'}</small>
+                  </label>
+                ))}
+              </div>
+            )}
+            {inviteNotice && <p className="faculty-project-form__feedback is-success">{inviteNotice}</p>}
+            <button className="primary-dashboard-button" type="button" disabled={!selectedStudentIds.length || rankingLoading} onClick={sendInvitations}>Invite selected students</button>
+          </section>
+        ))
+
+  if (selectedProject) {
+    return (
+      <ProjectDetails
+        project={projects.find((project) => project.id === selectedProject.id) || selectedProject}
+        applications={applications}
+        onBack={() => { setSelectedProject(null); closeForm(); setRankingProject(null) }}
+        onEdit={() => {
+          setRankingProject(null)
+          startEditingProject(projects.find((p) => p.id === selectedProject.id) || selectedProject)
+        }}
+        onRank={() => {
+          closeForm()
+          openStudentRanking(projects.find((p) => p.id === selectedProject.id) || selectedProject)
+        }}
+        onRemove={async () => {
+          if (await deleteProject(selectedProject)) setSelectedProject(null)
+        }}
+        onCreateGroup={() => createProjectGroupChat(selectedProject)}
+        creatingGroup={creatingGroupChat}
+        groupNotice={groupChatNotice}
+        managementPanel={<>{showForm && <button className="text-button" type="button" onClick={closeForm}>Cancel editing</button>}{projectForm}{rankingPanel}{formSuccess && !showForm && <p role="status">{formSuccess}</p>}</>}
+      />
+    )
+  }
+
+  return (
+    <div className="dashboard-section">
+      <section className="content-card">
+        <Heading
+          eyebrow="Research portfolio"
+          title="My research projects"
+          action={
+            <button
+              className="primary-dashboard-button faculty-create-button"
+              type="button"
+              onClick={() => (showForm ? closeForm() : startCreatingProject())}
+            >
+              {showForm ? (
+                <>
+                  <X size={15} />
+                  Close form
+                </>
+              ) : (
+                <>
+                  <Plus size={15} />
+                  Create project
+                </>
+              )}
+            </button>
+          }
+        />
+
+        {projectForm}
 
         {formError && !showForm && (
           <p className="faculty-project-form__feedback is-error" role="alert">
@@ -1314,6 +1567,7 @@ function FacultyProjects({
               <article
                 className="faculty-project-card"
                 key={project.id}
+                onClick={() => setSelectedProject(project)}
               >
                 <div>
                   <span className="project-id">
@@ -1368,34 +1622,7 @@ function FacultyProjects({
                     {getRemainingSlotsLabel(project)}
                   </span>
 
-                  <div className="faculty-project-actions">
-                    <button
-                      className="text-button"
-                      type="button"
-                      onClick={() => startEditingProject(project)}
-                    >
-                      <Pencil size={14} />
-                      Edit
-                    </button>
-
-                    <button
-                      className="text-button"
-                      type="button"
-                      onClick={() => openStudentRanking(project)}
-                    >
-                      <UsersRound size={14} />
-                      Rank students
-                    </button>
-
-                    <button
-                      className="delete-project-button"
-                      type="button"
-                      onClick={() => deleteProject(project)}
-                    >
-                      <Trash2 size={14} />
-                      Remove
-                    </button>
-                  </div>
+                  <button className="text-button" type="button" onClick={(event) => { event.stopPropagation(); setSelectedProject(project) }}>Open project <ChevronRight size={14} /></button>
                 </footer>
 
                 {project.student_payment_aed !== null &&
@@ -1409,35 +1636,174 @@ function FacultyProjects({
           )}
         </div>
 
-        {rankingProject && (
-          <section className="faculty-ranking-panel">
-            <Heading
-              eyebrow="Pre-publication invitations"
-              title={`Students ranked by GPA for ${rankingProject.title}`}
-              action={<button className="text-button" type="button" onClick={() => setRankingProject(null)}>Close</button>}
-            />
-            <p className="faculty-ranking-note">This temporary ranking uses GPA only. It can later be replaced by the matching algorithm score.</p>
-            {rankingLoading ? <p>Loading students...</p> : !rankedStudents.length ? <p>No active student profiles are available yet.</p> : (
-              <div className="faculty-ranking-list">
-                {rankedStudents.map((student, index) => (
-                  <label className="faculty-ranking-row" key={student.student_id}>
-                    <input type="checkbox" checked={selectedStudentIds.includes(student.student_id)} onChange={() => toggleStudent(student.student_id)} disabled={student.invitation_status === 'Accepted'} />
-                    <strong>#{index + 1}</strong>
-                    <span className="candidate-avatar">{getInitials(student.full_name)}</span>
-                    <span><b>{student.full_name || 'Student'}</b><small>{student.major || student.department || 'Academic details not provided'}</small></span>
-                    <em>GPA {student.gpa ?? '—'}</em>
-                    <small>{student.invitation_status || 'Not invited'}</small>
-                  </label>
-                ))}
-              </div>
-            )}
-            {inviteNotice && <p className="faculty-project-form__feedback is-success">{inviteNotice}</p>}
-            <button className="primary-dashboard-button" type="button" disabled={!selectedStudentIds.length || rankingLoading} onClick={sendInvitations}>Invite selected students</button>
-          </section>
-        )}
+
       </section>
     </div>
   )
+}
+
+function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemove, onCreateGroup, creatingGroup, groupNotice, managementPanel }) {
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const registeredStudents = applications.filter(
+    (application) => application.opportunity_id === project.id
+  )
+  const status = project.visibility === 'draft'
+    ? 'Draft / Private'
+    : getRemainingSlots(project) === 0
+      ? 'Full'
+      : 'Public / Open'
+
+  return (
+    <div className="dashboard-section">
+      <section className="content-card project-details-page">
+        <Heading
+          eyebrow="Project details"
+          title={project.title || 'Research project'}
+          action={<button className="text-button" type="button" onClick={onBack}>Back to projects</button>}
+        />
+
+        <div className="project-details-page__meta">
+          <span>{`PRJ-${String(project.id).slice(0, 8)}`}</span>
+          <span>{project.type || 'Research project'}</span>
+          <strong>{status}</strong>
+        </div>
+
+        <div className="project-details-page__content">
+          <div>
+            <h3>About this project</h3>
+            <p>{project.description || 'No project description has been provided.'}</p>
+
+            <h3>Required skills</h3>
+            <div className="tag-list">
+              {(Array.isArray(project.tags) ? project.tags : []).length ? (
+                project.tags.map((skill) => <span key={skill}>{skill}</span>)
+              ) : <span>No skills listed</span>}
+            </div>
+
+            <FacultyMilestones projectId={project.id} />
+
+            <h3>Registered students</h3>
+            {registeredStudents.length ? (
+              <div className="project-student-list">
+                {registeredStudents.map((application) => (
+                  <div key={application.id}>
+                    <button type="button" onClick={() => setSelectedStudentId(application.student_id)}>
+                      {application.student_name || 'Student applicant'}
+                    </button>
+                    <span>{application.student_major || application.student_department || 'Academic details not provided'}</span>
+                    <em>{application.status || 'Submitted'}</em>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="project-student-list__empty">No students have registered for this project yet.</p>
+            )}
+          </div>
+
+          <aside>
+            <div><small>Department</small><strong>{project.department || 'Not set'}</strong></div>
+            <div><small>Application deadline</small><strong>{project.deadline || 'Not set'}</strong></div>
+            <div><small>Student places</small><strong>{getRemainingSlotsLabel(project)}</strong></div>
+            {project.student_payment_aed !== null && project.student_payment_aed !== undefined && (
+              <div><small>Student stipend</small><strong>AED {formatStudentPayment(project.student_payment_aed)}</strong></div>
+            )}
+          </aside>
+        </div>
+
+        <footer className="project-details-page__actions">
+          <button className="text-button" type="button" onClick={onEdit}><Pencil size={14} /> Edit project</button>
+          <button className="text-button" type="button" onClick={onRank}><UsersRound size={14} /> Rank students</button>
+          <button className="text-button" type="button" disabled={creatingGroup} onClick={onCreateGroup}><MessageSquare size={14} /> {creatingGroup ? 'Creating group…' : 'Create group chat'}</button>
+          <button className="delete-project-button" type="button" onClick={onRemove}><Trash2 size={14} /> Remove</button>
+        </footer>
+        {managementPanel}
+        {groupNotice && <p className="faculty-project-form__feedback is-success">{groupNotice}</p>}
+        <StudentProfileDialog
+          studentId={selectedStudentId}
+          onClose={() => setSelectedStudentId(null)}
+        />
+      </section>
+    </div>
+  )
+}
+
+function FacultyMilestones({ projectId }) {
+  const [milestones, setMilestones] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [draft, setDraft] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    setDraft(null)
+    async function load() {
+      const { data, error: loadError } = await supabase.from('project_milestones').select('*').eq('opportunity_id', String(projectId)).order('due_date', { ascending: true, nullsFirst: false }).order('created_at')
+      if (cancelled) return
+      if (loadError) setError(loadError.message)
+      else setMilestones(data || [])
+      setLoading(false)
+    }
+    load()
+    return () => { cancelled = true }
+  }, [projectId])
+
+  async function save(event) {
+    event.preventDefault()
+    if (saving) return
+    if (!draft.title.trim()) { setError('Enter a milestone title.'); return }
+    setSaving(true)
+    setError('')
+    const payload = {
+      opportunity_id: String(projectId), title: draft.title.trim(), description: draft.description.trim() || null,
+      due_date: draft.due_date || null, status: draft.status,
+      completed_at: draft.status === 'Completed' ? (editing?.completed_at || new Date().toISOString()) : null,
+      updated_at: new Date().toISOString(),
+    }
+    const request = editing
+      ? supabase.from('project_milestones').update(payload).eq('id', editing.id).eq('opportunity_id', String(projectId))
+      : supabase.from('project_milestones').insert(payload)
+    const { data, error: saveError } = await request.select('*').single()
+    if (saveError) setError(saveError.message)
+    else {
+      setMilestones((items) => editing ? items.map((item) => item.id === editing.id ? data : item) : [...items, data])
+      setDraft(null)
+      setEditing(null)
+    }
+    setSaving(false)
+  }
+
+  async function remove(item) {
+    if (saving || !window.confirm(`Delete milestone “${item.title}”?`)) return
+    setSaving(true)
+    setError('')
+    const { error: deleteError } = await supabase.from('project_milestones').delete().eq('id', item.id).eq('opportunity_id', String(projectId)).select('id').single()
+    if (deleteError) setError(deleteError.message)
+    else {
+      setMilestones((items) => items.filter((entry) => entry.id !== item.id))
+      if (editing?.id === item.id) { setDraft(null); setEditing(null) }
+    }
+    setSaving(false)
+  }
+
+  return <section className="faculty-milestones">
+    <div className="faculty-milestones-heading"><h3>Milestones</h3><button className="text-button" type="button" disabled={saving || loading} onClick={() => { setEditing(null); setError(''); setDraft({ title: '', description: '', due_date: '', status: 'Pending' }) }}><Plus size={15} /> Add milestone</button></div>
+    {error && <p role="alert">{error}</p>}
+    {draft && <form className="faculty-project-form" onSubmit={save}>
+      <label>Title<input required value={draft.title} disabled={saving} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
+      <label>Description<textarea value={draft.description} disabled={saving} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
+      <label>Due date<input type="date" value={draft.due_date} disabled={saving} onChange={(event) => setDraft({ ...draft, due_date: event.target.value })} /></label>
+      <label>Status<select value={draft.status} disabled={saving} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>{['Pending', 'In Progress', 'Completed'].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <div className="faculty-project-form__actions"><button className="primary-dashboard-button" type="submit" disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Add milestone'}</button><button className="text-button" type="button" disabled={saving} onClick={() => { setDraft(null); setEditing(null); setError('') }}>Cancel</button></div>
+    </form>}
+    {loading ? <p role="status">Loading milestones…</p> : !milestones.length ? <p>No milestones recorded for this project.</p> : <div className="faculty-milestone-list">{[...milestones].sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999') || a.created_at.localeCompare(b.created_at)).map((item) => <article key={item.id}>
+      <div><strong>{item.title}</strong><small>{item.due_date ? `Due ${item.due_date}` : 'No due date'} · {item.status}</small>{item.description && <p>{item.description}</p>}</div>
+      <div className="faculty-project-actions"><button className="text-button" type="button" disabled={saving} onClick={() => { setEditing(item); setError(''); setDraft({ title: item.title, description: item.description || '', due_date: item.due_date || '', status: item.status }) }}><Pencil size={14} /> Edit</button><button className="delete-project-button" type="button" disabled={saving} onClick={() => remove(item)}><Trash2 size={14} /> Delete</button></div>
+    </article>)}</div>}
+  </section>
 }
 
 function CandidateCard({
@@ -1446,6 +1812,8 @@ function CandidateCard({
   project,
   onReview,
   isReviewing,
+  onViewStudent,
+  onViewProject,
 }) {
   // Overview still uses the existing candidate summary shape, while the
   // Applications tab supplies a real database application.  Supporting both
@@ -1473,12 +1841,21 @@ function CandidateCard({
         </span>
       </div>
 
-      <h3>
-        {studentName}
-      </h3>
+      <h3><button className="candidate-name-button" type="button" onClick={() => onViewStudent?.(entry.student_id)}>{studentName}</button></h3>
 
       <p>
-        {entry.project_title || project?.title || 'Project not specified'}
+        {entry.project_title || project?.title ? onViewProject ? (
+          <button
+            className="candidate-project-button"
+            type="button"
+            onClick={() => onViewProject?.(entry.opportunity_id || entry.projectId)}
+          >
+            {entry.project_title || project?.title}
+          </button>
+        ) : (entry.project_title || project?.title) : 'Project not specified'}
+        {(entry.student_major || entry.student_department) && (
+          <><br />{entry.student_major || entry.student_department}</>
+        )}
         {entry.student_email && (
           <><br />{entry.student_email}</>
         )}
@@ -1489,6 +1866,16 @@ function CandidateCard({
           {appliedDate}
         </span>
       </footer>
+
+      {entry.student_id && (
+        <button
+          className="candidate-view-profile"
+          type="button"
+          onClick={() => onViewStudent?.(entry.student_id)}
+        >
+          View student profile
+        </button>
+      )}
 
       {isSubmitted && (
         <div className="candidate-quick-actions">
@@ -1517,6 +1904,22 @@ function CandidateCard({
   )
 }
 
+function StudentProfileDialog({ studentId, onClose }) {
+  const [student, setStudent] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!studentId) return
+    supabase.rpc('get_student_profile_for_faculty', { p_student_id: studentId }).then(({ data, error: loadError }) => {
+      if (loadError) setError(loadError.message || 'Could not load this student profile.')
+      else setStudent(data)
+    })
+  }, [studentId])
+
+  if (!studentId) return null
+  return <div className="faculty-modal-backdrop" onClick={onClose}><section className="candidate-modal" role="dialog" aria-modal="true" aria-label="Student profile" onClick={(event) => event.stopPropagation()}><button className="candidate-modal__close" type="button" onClick={onClose}><X size={18} /></button>{error ? <p className="faculty-modal-message">{error}</p> : !student ? <p className="faculty-modal-message">Loading student profile…</p> : <><header><span className="candidate-avatar candidate-avatar--large">{getInitials(student.full_name)}</span><div><span>Student profile</span><h2>{student.full_name}</h2><p>{student.headline || student.major || 'UAEU student researcher'}</p></div></header><div className="candidate-modal__body"><div><h3>Academic details</h3><p><strong>Major:</strong> {student.major || 'Not set'}<br /><strong>Department:</strong> {student.department || 'Not set'}<br /><strong>Year of study:</strong> {student.year_of_study || 'Not set'}<br /><strong>GPA:</strong> {student.gpa ?? 'Not set'}</p><h3>About</h3><p>{student.bio || 'No biography provided.'}</p></div><aside><div><small>Skills</small><strong>{Array.isArray(student.skills) && student.skills.length ? student.skills.join(', ') : 'Not set'}</strong></div><div><small>Research interests</small><strong>{Array.isArray(student.research_interests) && student.research_interests.length ? student.research_interests.join(', ') : 'Not set'}</strong></div></aside></div></>}</section></div>
+}
+
 function FacultyApplications({
   applications,
   loading,
@@ -1527,10 +1930,17 @@ function FacultyApplications({
 }) {
   const [query, setQuery] =
     useState('')
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const [selectedProject, setSelectedProject] = useState('')
+  const [selectedStatus, setSelectedStatus] = useState('')
+  const projectNames = [...new Set(applications.map((application) => application.project_title).filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second))
 
   const visible =
     applications.filter(
       (application) =>
+        (!selectedProject || application.project_title === selectedProject) &&
+        (!selectedStatus || application.status === selectedStatus) &&
         `${application.student_name || ''} ${application.student_email || ''} ${application.project_title || ''}`
           .toLowerCase()
           .includes(
@@ -1552,6 +1962,7 @@ function FacultyApplications({
           }
         />
 
+        <div className="faculty-application-filters">
         <label className="dashboard-search">
           <Search size={18} />
 
@@ -1563,8 +1974,26 @@ function FacultyApplications({
               )
             }
             placeholder="Search students or projects"
+            aria-label="Search students or projects"
           />
         </label>
+        <label className="faculty-application-project-filter">
+          <span>Project</span>
+          <select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
+            <option value="">All projects</option>
+            {projectNames.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </label>
+        <label className="faculty-application-project-filter faculty-application-status-filter">
+          <span>Status</span>
+          <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
+            <option value="">All statuses</option>
+            <option value="Submitted">Pending</option>
+            <option value="Accepted">Accepted</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+        </label>
+        </div>
 
         {reviewNotice && (
           <p
@@ -1584,7 +2013,7 @@ function FacultyApplications({
             {error}
           </p>
         ) : (
-          <div className="faculty-candidate-grid">
+          <div className="faculty-application-list">
             {visible.map(
               (application) => (
                 <CandidateCard
@@ -1592,6 +2021,7 @@ function FacultyApplications({
                   application={application}
                   onReview={onReview}
                   isReviewing={reviewingApplicationIds.includes(application.id)}
+                  onViewStudent={setSelectedStudentId}
                 />
               )
             )}
@@ -1611,15 +2041,30 @@ function FacultyApplications({
             </p>
           </div>
         )}
+        <StudentProfileDialog studentId={selectedStudentId} onClose={() => setSelectedStudentId(null)} />
       </section>
     </div>
   )
 }
 
-function FacultyIdeas() {
+function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
+  const [selectedIdeaId, setSelectedIdeaId] = useState(null)
   const [ideas, setIdeas] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const [adoptingIdeaId, setAdoptingIdeaId] = useState(null)
+  const [removingAdoptionId, setRemovingAdoptionId] = useState(null)
+  const selectedIdea = ideas.find((idea) => idea.id === selectedIdeaId)
+
+  useEffect(() => {
+    if (!selectedIdeaId) return
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape') setSelectedIdeaId(null)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [selectedIdeaId])
 
   async function loadIdeas() {
     setLoading(true)
@@ -1632,8 +2077,10 @@ function FacultyIdeas() {
         title,
         category,
         description,
+        student_id,
+        adopted_by,
         created_at,
-        profiles (
+        profiles!research_ideas_student_id_fkey (
           full_name,
           major
         )
@@ -1642,7 +2089,7 @@ function FacultyIdeas() {
 
     if (loadError) {
       console.error('Faculty research ideas load error:', loadError.message)
-      setError('Could not load research ideas. Please try again.')
+      setError(`Could not load research ideas: ${loadError.message || 'Please try again.'}`)
       setLoading(false)
       return
     }
@@ -1654,6 +2101,32 @@ function FacultyIdeas() {
   useEffect(() => {
     loadIdeas()
   }, [])
+
+  async function adoptIdea(idea) {
+    setAdoptingIdeaId(idea.id)
+    const { error: adoptError } = await supabase.rpc('adopt_research_idea', { p_idea_id: idea.id })
+    if (adoptError) setError(adoptError.message || 'Could not adopt this idea.')
+    else { await loadIdeas(); onIdeaAdopted?.() }
+    setAdoptingIdeaId(null)
+  }
+
+  async function removeAdoption(idea) {
+    if (idea.adopted_by !== facultyProfile?.id || removingAdoptionId !== null) return
+    setRemovingAdoptionId(idea.id)
+    try {
+      const { error: removalError } = await supabase.rpc('remove_research_idea_adoption', { p_idea_id: idea.id })
+      if (removalError) {
+        setError(removalError.message || 'Could not remove this adoption.')
+      } else {
+        await loadIdeas()
+        onIdeaAdopted?.()
+      }
+    } catch (removalError) {
+      setError(removalError.message || 'Could not remove this adoption.')
+    } finally {
+      setRemovingAdoptionId(null)
+    }
+  }
 
   return (
     <div className="dashboard-section">
@@ -1683,18 +2156,46 @@ function FacultyIdeas() {
         ) : (
           <div className="faculty-idea-grid">
             {ideas.map((idea) => (
-              <article key={idea.id}>
-                <span>{idea.category}</span>
-                <h3>{idea.title}</h3>
-                <p>{idea.description}</p>
-                <small>
-                  Submitted by {idea.profiles?.full_name || 'Student'}
+              <article key={idea.id} onClick={(event) => {
+                if (!event.target.closest('button')) setSelectedIdeaId(idea.id)
+              }}>
+                <div className="faculty-idea-summary">
+                <h3><button className="idea-details-title" type="button" onClick={() => setSelectedIdeaId(idea.id)}>{idea.title}</button></h3>
+                <small>Submitted by <button className="idea-student-button" type="button" onClick={() => setSelectedStudentId(idea.student_id)}>{idea.profiles?.full_name || 'Student'}</button>
                   {idea.profiles?.major
                     ? ` · ${idea.profiles.major}`
                     : ''}
                 </small>
+                </div>
+                <div className="faculty-idea-actions">
+                {idea.adopted_by === facultyProfile?.id && (
+                  <button type="button" disabled={removingAdoptionId !== null} onClick={() => removeAdoption(idea)}>{removingAdoptionId === idea.id ? 'Removing…' : 'Remove adoption'}</button>
+                )}
+                <button type="button" onClick={() => setSelectedIdeaId(idea.id)}>View details</button>
+                <button type="button" disabled={Boolean(idea.adopted_by) || adoptingIdeaId === idea.id} className={idea.adopted_by ? 'idea-adopted' : ''} onClick={() => adoptIdea(idea)}>{idea.adopted_by ? (idea.adopted_by === facultyProfile?.id ? 'Adopted by you' : 'Already adopted') : adoptingIdeaId === idea.id ? 'Adopting…' : 'Adopt idea'}</button>
+                </div>
               </article>
             ))}
+          </div>
+        )}
+        <StudentProfileDialog studentId={selectedStudentId} onClose={() => setSelectedStudentId(null)} />
+        {selectedIdea && (
+          <div className="faculty-modal-backdrop" onClick={() => setSelectedIdeaId(null)}>
+            <section className="candidate-modal idea-details-modal" role="dialog" aria-modal="true" aria-labelledby="idea-details-title" onClick={(event) => event.stopPropagation()}>
+              <button className="candidate-modal__close" type="button" autoFocus aria-label="Close idea details" onClick={() => setSelectedIdeaId(null)}><X size={18} /></button>
+              <header><div><span>Research idea · {selectedIdea.category}</span><h2 id="idea-details-title">{selectedIdea.title}</h2><p>Submitted by {selectedIdea.profiles?.full_name || 'Student'}</p></div></header>
+              <div className="candidate-modal__body">
+                <div><h3>Description</h3><p className="idea-details-description">{selectedIdea.description}</p></div>
+                <aside>
+                  {selectedIdea.adopted_by === facultyProfile?.id && (
+                    <button type="button" className="outline-button" disabled={removingAdoptionId !== null} onClick={() => removeAdoption(selectedIdea)}>{removingAdoptionId === selectedIdea.id ? 'Removing…' : 'Remove adoption'}</button>
+                  )}
+                  <div><small>Submitted</small><strong>{new Date(selectedIdea.created_at).toLocaleDateString()}</strong></div>
+                  <div><small>Status</small><strong>{selectedIdea.adopted_by ? selectedIdea.adopted_by === facultyProfile?.id ? 'Adopted by you' : 'Already adopted' : 'Available for adoption'}</strong></div>
+                  <button type="button" className="outline-button" disabled={Boolean(selectedIdea.adopted_by) || adoptingIdeaId === selectedIdea.id} onClick={() => adoptIdea(selectedIdea)}>{selectedIdea.adopted_by ? 'Adopted' : adoptingIdeaId === selectedIdea.id ? 'Adopting…' : 'Adopt idea'}</button>
+                </aside>
+              </div>
+            </section>
           </div>
         )}
       </section>
@@ -1705,11 +2206,12 @@ function FacultyIdeas() {
 function FacultyAnalytics({
   projects,
   candidates,
+  onNavigate,
 }) {
   return (
     <div className="dashboard-section">
       <div className="metric-grid">
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('projects')}>
           <span className="metric-icon metric-icon--gold">
             <BriefcaseBusiness />
           </span>
@@ -1725,11 +2227,11 @@ function FacultyAnalytics({
           </div>
 
           <small>
-            Temporary project data
+            Your research projects
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('applications')}>
           <span className="metric-icon metric-icon--blue">
             <UsersRound />
           </span>
@@ -1745,10 +2247,9 @@ function FacultyAnalytics({
           </div>
 
           <small>
-            Application data will be
-            connected to Supabase later
+            Student applications to your projects
           </small>
-        </article>
+        </button>
       </div>
     </div>
   )
@@ -1790,6 +2291,7 @@ export default function FacultyDashboard({
   const [applicationsError, setApplicationsError] = useState('')
   const [reviewingApplicationIds, setReviewingApplicationIds] = useState([])
   const [applicationReviewNotice, setApplicationReviewNotice] = useState(null)
+  const [projectToOpen, setProjectToOpen] = useState(null)
 
   useEffect(() => {
     setFacultyProfile(profile)
@@ -1917,6 +2419,7 @@ export default function FacultyDashboard({
 
   const candidates = facultyApplications.map((application) => ({
     id: application.id,
+    student_id: application.student_id,
     name: application.student_name || 'Student applicant',
     initials: getInitials(application.student_name || 'Student applicant'),
     projectId: application.opportunity_id,
@@ -1929,12 +2432,21 @@ export default function FacultyDashboard({
     overview: (
       <Overview
         projects={projects}
+        projectsLoading={projectsLoading}
+        projectsError={projectsError}
+        applicationsLoading={applicationsLoading}
+        applicationsError={applicationsError}
         candidates={
           candidates
         }
         onNavigate={
           setActiveTab
         }
+        onViewProject={(projectId) => {
+          if (!projectId) return
+          setProjectToOpen(projectId)
+          setActiveTab('projects')
+        }}
       />
     ),
 
@@ -1953,9 +2465,12 @@ export default function FacultyDashboard({
       <FacultyProjects
         profile={facultyProfile}
         projects={projects}
+        applications={facultyApplications}
         loading={projectsLoading}
         error={projectsError}
         onProjectsChanged={loadFacultyProjects}
+        selectedProjectId={projectToOpen}
+        onProjectOpened={() => setProjectToOpen(null)}
       />
     ),
 
@@ -1971,7 +2486,7 @@ export default function FacultyDashboard({
     ),
 
     ideas: (
-      <FacultyIdeas />
+      <FacultyIdeas facultyProfile={facultyProfile} onIdeaAdopted={loadFacultyProjects} />
     ),
 
     analytics: (
@@ -1980,6 +2495,7 @@ export default function FacultyDashboard({
         candidates={
           candidates
         }
+        onNavigate={setActiveTab}
       />
     ),
 
@@ -2007,6 +2523,7 @@ export default function FacultyDashboard({
           profile={
             facultyProfile
           }
+          onNavigate={setActiveTab}
         />
 
         <main className="dashboard-content">
@@ -2028,5 +2545,4 @@ export default function FacultyDashboard({
         </main>
       </div>
     </div>
-  )
-}
+  )}

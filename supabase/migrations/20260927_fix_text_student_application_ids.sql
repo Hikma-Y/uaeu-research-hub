@@ -93,12 +93,14 @@ as
     application.created_at,
     application.updated_at,
     opportunity.title as project_title,
-    profile.full_name as student_name
+    profile.full_name as student_name,
+    profile.major as student_major,
+    profile.department as student_department
   from public.applications application
   join public.research_opportunities opportunity
     on opportunity.id = application.opportunity_id
   join public.profiles profile
-    on profile.id::text = application.student_id
+    on profile.id::text = application.student_id::text
   where opportunity.owner_id = auth.uid()
     and public.current_profile_role() = 'faculty';
 

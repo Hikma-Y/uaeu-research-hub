@@ -2,6 +2,55 @@
   background: linear-gradient(180deg, #74363b 0%, #52292e 60%, #321d21 100%);
 }
 
+.faculty-application-filters {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.faculty-application-filters .dashboard-search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.faculty-application-project-filter {
+  display: grid;
+  gap: 6px;
+  width: 280px;
+  max-width: 100%;
+  color: #5f5552;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.faculty-application-project-filter select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #e6dfdb;
+  border-radius: 10px;
+  background: #fcfbf9;
+  color: #544b48;
+  font: inherit;
+}
+.faculty-application-status-filter { width: 160px; }
+.faculty-application-list { display: grid; gap: 12px; }
+.faculty-application-list .candidate-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  column-gap: 16px;
+  row-gap: 6px;
+  align-items: center;
+  padding: 16px 18px;
+}
+.faculty-application-list .candidate-card__top { display: contents; }
+.faculty-application-list .candidate-avatar { grid-column: 1; grid-row: 1 / 4; }
+.faculty-application-list .candidate-match { grid-column: 3; grid-row: 1; justify-self: end; }
+.faculty-application-list .candidate-card h3 { grid-column: 2; grid-row: 1; margin: 0; }
+.faculty-application-list .candidate-card > p { grid-column: 2; grid-row: 2 / 4; margin: 0; min-height: 0; overflow-wrap: anywhere; }
+.faculty-application-list .candidate-card footer { grid-column: 3; grid-row: 2; margin: 0; padding: 0; border: 0; justify-content: end; }
+.faculty-application-list .candidate-view-profile { grid-column: 3; grid-row: 3; margin: 0; justify-self: end; }
+.faculty-application-list .candidate-quick-actions { grid-column: 2 / -1; margin-top: 6px; justify-self: end; }
+
 .faculty-sidebar .student-sidebar__brand {
   color: #633238;
 }
@@ -38,6 +87,7 @@
   border-color: #d9c9c1;
   box-shadow: 0 14px 30px rgba(69, 44, 41, 0.08);
 }
+.faculty-project-card { cursor: pointer; }
 
 .candidate-card__top {
   display: flex;
@@ -82,6 +132,13 @@
   color: #3d3330;
   font-size: 0.88rem;
 }
+.candidate-name-button,
+.idea-student-button { padding: 0; color: inherit; border: 0; background: transparent; font: inherit; font-weight: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.idea-student-button { color: #6d393d; }
+.candidate-view-profile { display: inline-flex; margin: 0 0 14px; padding: 0; color: #6d393d; border: 0; background: transparent; font: inherit; font-size: 0.66rem; font-weight: 800; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.candidate-project-button { padding: 0; color: inherit; border: 0; background: transparent; font: inherit; font-size: inherit; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+.faculty-modal-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(37, 20, 22, 0.45); }
+.faculty-modal-message { padding: 60px 30px; color: #665956; }
 
 .candidate-card > p {
   min-height: 33px;
@@ -162,6 +219,8 @@
 .faculty-ranking-panel { display: grid; gap: 15px; margin-top: 24px; padding: 22px; border: 1px solid #e4d8d2; border-radius: 14px; background: #fcfaf8; }
 .faculty-ranking-note { margin: 0; color: #7e7370; font-size: 0.7rem; line-height: 1.5; }
 .faculty-ranking-list { display: grid; gap: 8px; }
+.faculty-ranking-search { width: 100%; min-width: 0; margin: 0; box-sizing: border-box; }
+.faculty-ranking-search input { min-width: 0; }
 .faculty-ranking-row { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 12px; border: 1px solid #ebe2dd; border-radius: 10px; background: white; cursor: pointer; }
 .faculty-ranking-row > span:nth-of-type(2) { display: grid; min-width: 0; gap: 3px; }
 .faculty-ranking-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; }
@@ -238,6 +297,26 @@
   margin-top: 23px;
 }
 
+.faculty-profile-section-title {
+  margin: 26px 0 14px;
+  padding-top: 22px;
+  border-top: 1px solid #eee7e3;
+  color: #493e3b;
+  font-size: 0.82rem;
+}
+
+.faculty-profile-section-title + .faculty-profile-fields {
+  margin-top: 0;
+}
+
+.faculty-profile-fields--academic {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.faculty-profile-fields--academic label:first-child {
+  grid-column: 1 / -1;
+}
+
 .faculty-profile-fields label {
   display: grid;
   gap: 7px;
@@ -246,8 +325,10 @@
   font-weight: 700;
 }
 
+.faculty-profile-fields input,
 .faculty-profile-fields textarea {
-  min-height: 78px;
+  width: 100%;
+  min-width: 0;
   padding: 12px 14px;
   color: #574d49;
   border: 1px solid #e6dfdb;
@@ -257,9 +338,18 @@
   font: inherit;
   font-weight: 400;
   line-height: 1.5;
+}
+
+.faculty-profile-fields input {
+  min-height: 42px;
+}
+
+.faculty-profile-fields textarea {
+  min-height: 78px;
   resize: vertical;
 }
 
+.faculty-profile-fields input:not([readonly]),
 .faculty-profile-fields textarea:not([readonly]) {
   border-color: #a97c7e;
   background: white;
@@ -449,6 +539,25 @@
   font-size: 0.62rem;
   font-weight: 800;
 }
+.project-details-page__meta { display: flex; flex-wrap: wrap; gap: 9px; margin: 4px 0 24px; color: #78655f; font-size: 0.68rem; font-weight: 700; }
+.project-details-page__meta span, .project-details-page__meta strong { padding: 6px 9px; border-radius: 999px; background: #f4eee9; }
+.project-details-page__meta strong { color: #39725a; background: #e5f1ea; }
+.project-details-page__content { display: grid; grid-template-columns: minmax(0, 1fr) 235px; gap: 32px; }
+.project-details-page__content h3 { margin: 0 0 10px; color: #4b3f3b; font-size: 0.78rem; }
+.project-details-page__content h3:not(:first-child) { margin-top: 28px; }
+.project-details-page__content p { margin: 0; color: #766b67; font-size: 0.76rem; line-height: 1.7; white-space: pre-wrap; }
+.project-details-page__content aside { align-self: start; padding: 3px 15px; border-radius: 12px; background: #f8f4f1; }
+.project-details-page__content aside div { display: grid; gap: 4px; padding: 14px 0; border-bottom: 1px solid #e7ded9; }
+.project-details-page__content aside div:last-child { border-bottom: 0; }
+.project-details-page__content aside small { color: #918581; font-size: 0.6rem; font-weight: 700; }
+.project-details-page__content aside strong { color: #554844; font-size: 0.72rem; }
+.project-details-page__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; padding-top: 20px; border-top: 1px solid #eee6e1; }
+.project-student-list { display: grid; gap: 9px; }
+.project-student-list > div { display: grid; grid-template-columns: minmax(130px, 0.8fr) minmax(170px, 1.3fr) auto; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #e7ded9; border-radius: 10px; background: #fdfbf9; }
+.project-student-list button { width: fit-content; padding: 0; color: #6d393d; border: 0; background: transparent; font: inherit; font-size: 0.72rem; font-weight: 800; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+.project-student-list span { color: #807571; font-size: 0.67rem; }
+.project-student-list em { padding: 5px 8px; color: #39725a; border-radius: 999px; background: #e5f1ea; font-size: 0.59rem; font-style: normal; font-weight: 800; }
+.project-student-list__empty { color: #8c817d; font-size: 0.7rem; }
 
 .candidate-modal {
   width: min(800px, 100%);
@@ -678,6 +787,17 @@
 .candidate-shortlist { color: #6d5280; border: 1px solid #d8cde0; background: #f6f1f8; }
 .candidate-accept { display: inline-flex; align-items: center; gap: 5px; color: white; border: 0; background: #4c7d65; }
 
+.faculty-idea-grid { grid-template-columns: minmax(0, 1fr); }
+.faculty-idea-grid article { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.faculty-idea-summary { min-width: 0; }
+.faculty-idea-summary small { color: #8d827e; font-size: 0.65rem; }
+.faculty-idea-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
+.faculty-idea-grid .idea-student-button { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; font: inherit; }
+
+@media (max-width: 640px) {
+  .faculty-idea-grid article { flex-direction: column; align-items: flex-start; gap: 16px; }
+}
+
 .faculty-idea-grid article > span {
   color: #95723b;
   font-size: 0.59rem;
@@ -687,8 +807,7 @@
 }
 
 .faculty-idea-grid h3 {
-  min-height: 50px;
-  margin: 13px 0 8px;
+  margin: 0 0 8px;
   font-size: 0.9rem;
   line-height: 1.45;
 }
@@ -720,6 +839,21 @@
   background: #e9f2ed;
   cursor: default;
 }
+
+.faculty-idea-grid .idea-details-title {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.faculty-idea-grid .idea-details-title:hover { color: #6d393d; text-decoration: underline; }
+.faculty-idea-grid article { cursor: pointer; }
+.idea-details-description { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .faculty-analytics-grid {
   display: grid;
@@ -799,11 +933,22 @@
 }
 
 @media (max-width: 760px) {
+  .faculty-application-filters { flex-direction: column; align-items: stretch; }
+  .faculty-application-project-filter,
+  .faculty-application-status-filter { width: 100%; }
+  .faculty-application-list .candidate-card { grid-template-columns: 42px minmax(0, 1fr); }
+  .faculty-application-list .candidate-match { grid-column: 2; grid-row: 4; justify-self: start; }
+  .faculty-application-list .candidate-card footer { grid-column: 2; grid-row: 5; justify-content: start; }
+  .faculty-application-list .candidate-view-profile { grid-column: 2; grid-row: 6; justify-self: start; }
+  .faculty-application-list .candidate-quick-actions { grid-column: 2; grid-row: 7; justify-self: stretch; }
+  .faculty-profile-fields--academic { grid-template-columns: 1fr; }
   .faculty-idea-grid { grid-template-columns: 1fr; }
   .candidate-modal > header { grid-template-columns: auto 1fr; }
   .candidate-match--large { grid-column: 1 / -1; justify-self: start; }
   .candidate-modal__body { grid-template-columns: 1fr; }
   .candidate-modal__body > label { grid-column: 1; }
+  .project-details-page__content { grid-template-columns: 1fr; }
+  .project-student-list > div { grid-template-columns: 1fr; gap: 6px; }
 }
 
 @media (max-width: 620px) {
@@ -864,3 +1009,8 @@
 @media (max-width: 700px) {
   .candidate-profile-details { grid-template-columns: 1fr; }
 }
+.faculty-milestones-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.faculty-milestone-list { display: grid; gap: 12px; }
+.faculty-milestone-list article { padding: 16px; border: 1px solid #e8dfda; border-radius: 10px; }
+.faculty-milestone-list small { display: block; margin-top: 6px; color: #807571; }
+.faculty-milestone-list .faculty-project-actions { margin-top: 12px; }

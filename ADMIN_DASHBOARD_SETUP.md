@@ -28,19 +28,20 @@ Use the upgraded:
 
 No additional NPM package is required.
 
-## 3. Optional but recommended: deploy secure admin user creation
+## 3. Optional but recommended: deploy secure admin user management
 
-The Add User form calls a Supabase Edge Function named `admin-create-user`.
+The Add User and Delete User controls call the `admin-create-user` and `admin-delete-user` Supabase Edge Functions.
 
 With the Supabase CLI installed and linked to the project:
 
 ```powershell
 supabase functions deploy admin-create-user
+supabase functions deploy admin-delete-user
 ```
 
 Do NOT put `SUPABASE_SERVICE_ROLE_KEY` in Vite `.env` or any frontend file. Supabase provides the service role secret securely to the Edge Function environment.
 
-Until the function is deployed, all other dashboard pages work, but the Add User form will return a function-not-found error. You can continue creating Auth users from the Supabase Dashboard manually.
+Until these functions are deployed, all other dashboard pages work, but the Add User and Delete User controls will return a function-not-found error. You can continue managing Auth users from the Supabase Dashboard manually.
 
 ## 4. Prevent suspended users from entering the application
 
