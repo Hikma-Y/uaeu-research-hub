@@ -127,6 +127,22 @@
   font-weight: 800;
 }
 
+.candidate-match--rejected {
+  color: #963e46;
+  background: #f9eaeb;
+}
+
+.candidate-match--submitted,
+.candidate-match--pending {
+  color: #806000;
+  background: #fff3c4;
+}
+
+.candidate-match--accepted {
+  color: #39725a;
+  background: #e5f1ea;
+}
+
 .candidate-card h3 {
   margin: 16px 0 5px;
   color: #3d3330;
@@ -225,6 +241,8 @@
 .faculty-ranking-row > span:nth-of-type(2) { display: grid; min-width: 0; gap: 3px; }
 .faculty-ranking-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; }
 .faculty-ranking-row small { color: #8e8380; font-size: 0.6rem; }
+.faculty-ranking-row .faculty-invitation-status.is-accepted { color: #166534; background: #dcfce7; padding: 5px 9px; border-radius: 999px; font-weight: 700; }
+.faculty-ranking-row .faculty-invitation-status.is-pending { color: #854d0e; background: #fef9c3; padding: 5px 9px; border-radius: 999px; font-weight: 700; }
 .faculty-ranking-row em { color: #6d393d; font-size: 0.66rem; font-style: normal; font-weight: 800; white-space: nowrap; }
 
 .delete-project-button {
@@ -553,11 +571,13 @@
 .project-details-page__content aside strong { color: #554844; font-size: 0.72rem; }
 .project-details-page__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; padding-top: 20px; border-top: 1px solid #eee6e1; }
 .project-student-list { display: grid; gap: 9px; }
-.project-student-list > div { display: grid; grid-template-columns: minmax(130px, 0.8fr) minmax(170px, 1.3fr) auto; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #e7ded9; border-radius: 10px; background: #fdfbf9; }
+.project-student-list > div { display: grid; grid-template-columns: minmax(130px, 0.8fr) minmax(170px, 1.3fr) auto auto; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #e7ded9; border-radius: 10px; background: #fdfbf9; }
 .project-student-list button { width: fit-content; padding: 0; color: #6d393d; border: 0; background: transparent; font: inherit; font-size: 0.72rem; font-weight: 800; cursor: pointer; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 .project-student-list span { color: #807571; font-size: 0.67rem; }
 .project-student-list em { padding: 5px 8px; color: #39725a; border-radius: 999px; background: #e5f1ea; font-size: 0.59rem; font-style: normal; font-weight: 800; }
 .project-student-list__empty { color: #8c817d; font-size: 0.7rem; }
+.project-student-list .project-student-remove { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 1px solid #edc6c8; border-radius: 8px; color: #b63d43; background: #fff8f8; text-decoration: none; }
+.project-student-list .project-student-remove:disabled { opacity: 0.6; cursor: wait; }
 
 .candidate-modal {
   width: min(800px, 100%);

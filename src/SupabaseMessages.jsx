@@ -83,6 +83,10 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
   const [creatingGroup, setCreatingGroup] = useState(false)
   const [showGroupMembers, setShowGroupMembers] = useState(false)
   const [groupMembers, setGroupMembers] = useState([])
+  const [memberSearch, setMemberSearch] = useState('')
+  const [membersRevision, setMembersRevision] = useState(0)
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [membersLoaded, setMembersLoaded] = useState(false)
   const [groupActionPending, setGroupActionPending] = useState(false)
   const [showContactEmail, setShowContactEmail] = useState(false)
   const messageListRef = useRef(null)
@@ -104,7 +108,7 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
     if (!query) return people.filter((person) => person.lastMessage || person.id === selectedId)
 
     return people.filter((person) =>
-      `${person.full_name || ''} ${person.email || ''} ${person.role || ''} ${person.department || ''}`
+      `${person.full_name || ''} ${person.email || ''} ${person.university_id || ''} ${person.id} ${person.role || ''} ${person.department || ''}`
         .toLowerCase()
         .includes(query)
     )
@@ -168,24 +172,41 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
   }, [profile?.id])
 
   useEffect(() => {
+    let cancelled = false
     async function loadGroupMembers() {
+      setGroupMembers([])
+      setMembersLoaded(false)
       if (!selectedGroupId) {
         setGroupMembers([])
         setShowGroupMembers(false)
         return
       }
-      const { data: memberships } = await supabase
+      setMembersLoading(true)
+      const { data: memberships, error: membershipError } = await supabase
         .from('project_message_group_members')
         .select('profile_id')
         .eq('group_id', selectedGroupId)
       const memberIds = (memberships || []).map((item) => item.profile_id)
-      const { data: directory } = memberIds.length
-        ? await supabase.from('message_directory').select('id, full_name, role, department').in('id', memberIds)
+      const { data: directory, error: directoryError } = !membershipError && memberIds.length
+        ? await supabase.from('message_directory').select('*').in('id', memberIds)
         : { data: [] }
+      if (cancelled) return
+      setMembersLoading(false)
+      if (membershipError || directoryError) {
+        setError('Could not load group members.')
+        return
+      }
       setGroupMembers(directory || [])
+      setMembersLoaded(true)
     }
 
     loadGroupMembers()
+    return () => { cancelled = true }
+  }, [selectedGroupId, membersRevision])
+
+  useEffect(() => {
+    setMemberSearch('')
+    setShowGroupMembers(false)
   }, [selectedGroupId])
 
   useEffect(() => {
@@ -448,6 +469,34 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
     setShowGroupForm(false)
   }
 
+  async function updateGroupMember(member, remove = false) {
+    if (!selectedGroup || groupActionPending || membersLoading) return
+    if (remove && !window.confirm(`Remove ${member.full_name || 'this user'} from the group?`)) return
+    setGroupActionPending(true)
+    setError('')
+    try {
+      const { error: updateError } = await supabase.rpc(
+        remove ? 'remove_message_group_member' : 'add_message_group_members',
+        remove ? { p_group_id: selectedGroup.id, p_member_id: member.id }
+          : { p_group_id: selectedGroup.id, p_member_ids: [member.id] }
+      )
+      if (updateError) setError(updateError.message || 'Could not update group members.')
+      else setMembersRevision((current) => current + 1)
+    } catch {
+      setError('Could not update group members. Please try again.')
+    } finally {
+      setGroupActionPending(false)
+    }
+  }
+
+  function matchesMemberSearch(person) {
+    return `${person.full_name || ''} ${person.university_id || ''} ${person.id}`.toLowerCase().includes(memberSearch.trim().toLowerCase())
+  }
+
+  const availableMembers = groupCandidates.filter((person) =>
+    !groupMembers.some((member) => member.id === person.id) && matchesMemberSearch(person)
+  )
+
   function closeSelectedGroup(groupId) {
     setGroups((current) => current.filter((group) => group.id !== groupId))
     setSelectedGroupId(null)
@@ -634,7 +683,7 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
                   setSelectedId(null)
                 }}
               >
-                <span className="conversation-avatar">GR</span>
+                <span className="conversation-avatar conversation-avatar--group"><UsersRound size={22} aria-label="Group chat" /></span>
                 <span className="conversation-copy"><strong><span>{group.name}</span>{group.has_unread_messages && <i className="conversation-name-unread-dot" aria-label="Unread group messages" />}</strong><small>Project group chat</small></span>
               </button>
             ))}
@@ -692,8 +741,8 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
 
       <section className="content-card chat-panel">
         <header>
-          <span className="conversation-avatar">
-            {selectedGroup ? 'GR' : selected ? initials(selected.full_name) : <UsersRound size={18} />}
+          <span className={selectedGroup ? 'conversation-avatar conversation-avatar--group' : 'conversation-avatar'}>
+            {selectedGroup ? <UsersRound size={22} aria-label="Group chat" /> : selected ? initials(selected.full_name) : <UsersRound size={18} />}
           </span>
           <div>
             {selectedGroup ? (
@@ -707,10 +756,11 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
             ) : <strong>{selected?.full_name || 'Choose a person'}</strong>}
             {selected && <small className="chat-presence"><i className="online-dot" /> Available to message</small>}
             {showContactEmail && canShowSelectedEmail && <small className="chat-contact-email">{selected.email}</small>}
-            <small>{selected ? `${selected.role || 'User'}${selected.department ? ` · ${selected.department}` : ''}` : 'Private one-to-one conversation'}</small>
+            <small>{selectedGroup ? 'Group conversation' : selected ? `${selected.role || 'User'}${selected.department ? ` · ${selected.department}` : ''}` : 'Private one-to-one conversation'}</small>
           </div>
           {selectedGroup && (
             <div className="group-header-actions">
+              <button type="button" aria-expanded={showGroupMembers} onClick={() => setShowGroupMembers((current) => !current)}><UsersRound size={15} /> Members</button>
               <button type="button" onClick={leaveGroup} disabled={groupActionPending}>
                 <LogOut size={15} />
                 Leave group
@@ -728,12 +778,29 @@ export default function SupabaseMessages({ profile, eyebrow = 'Inbox', initialCo
         {selectedGroup && showGroupMembers && (
           <div className="group-members-panel">
             <strong>Group members · {groupMembers.length}</strong>
-            {groupMembers.map((member) => (
-              <div key={member.id}>
+            <label className="dashboard-search group-member-search">
+              <Search size={16} />
+              <input value={memberSearch} onChange={(event) => setMemberSearch(event.target.value)} placeholder="Search by name or ID" aria-label="Search members and users by name or ID" />
+            </label>
+            {membersLoading && <small>Loading members...</small>}
+            {groupMembers.filter(matchesMemberSearch).map((member) => (
+              <div className="group-member-row" key={member.id}>
                 <span className="conversation-avatar">{initials(member.full_name)}</span>
-                <span><b>{member.full_name || 'University user'}</b><small>{member.role || 'User'}{member.department ? ` · ${member.department}` : ''}</small></span>
+                <span className="group-member-copy"><b>{member.full_name || 'University user'}</b><small>{member.role || 'User'} · {member.university_id || member.id}</small></span>
+                {selectedGroup.created_by === profile?.id && member.id !== profile.id && <button type="button" disabled={groupActionPending || membersLoading} onClick={() => updateGroupMember(member, true)} aria-label={`Remove ${member.full_name || member.id}`}>Remove</button>}
               </div>
             ))}
+            {!membersLoading && !groupMembers.filter(matchesMemberSearch).length && <small>No matching members.</small>}
+            {canCreateGroups && membersLoaded && !membersLoading && <>
+              <strong>Add users</strong>
+              <small>{profile.role === 'student' ? 'You can add students only.' : 'You can add students and faculty.'}</small>
+              {availableMembers.map((person) => <div className="group-member-row" key={person.id}>
+                <span className="conversation-avatar">{initials(person.full_name)}</span>
+                <span className="group-member-copy"><b>{person.full_name || 'University user'}</b><small>{person.role} · {person.university_id || person.id}</small></span>
+                <button type="button" disabled={groupActionPending} onClick={() => updateGroupMember(person)} aria-label={`Add ${person.full_name || person.id}`}>Add</button>
+              </div>)}
+              {!availableMembers.length && <small>No matching users to add.</small>}
+            </>}
           </div>
         )}
 

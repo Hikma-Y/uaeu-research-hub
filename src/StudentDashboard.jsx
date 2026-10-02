@@ -229,7 +229,7 @@ function StudentNotificationBell({ profile, onNavigate }) {
 
       const { data: messages } = await supabase
         .from('direct_messages')
-        .select('id, sender_id, body, attachment_name, created_at')
+        .select('id, sender_id, body, attachment_name, created_at, project_invitation_id')
         .eq('recipient_id', profile.id)
         .is('read_at', null)
         .order('created_at', { ascending: false })
@@ -261,9 +261,17 @@ function StudentNotificationBell({ profile, onNavigate }) {
         <div className="notification-menu" role="dialog" aria-label="Notifications">
           <header><strong>Notifications</strong>{notifications.length > 0 && <span>{notifications.length} new</span>}</header>
           {notifications.length ? notifications.map((notification) => (
-            <button key={notification.id} type="button" onClick={() => { setIsOpen(false); onNavigate('messages') }}>
+            <button key={notification.id} type="button" onClick={() => {
+              setIsOpen(false)
+              if (notification.project_invitation_id) {
+                supabase.rpc('mark_project_invitation_notification_read', { p_message_id: notification.id }).then(({ error }) => {
+                  if (!error) setNotifications((current) => current.filter((item) => item.id !== notification.id))
+                })
+              }
+              onNavigate(notification.project_invitation_id ? 'projects' : 'messages')
+            }}>
               <span className="notification-menu__avatar">{getInitials(notification.sender_name)}</span>
-              <span><strong>{notification.sender_name}</strong><small>Message · {notification.body || `Attachment: ${notification.attachment_name || 'file'}`}</small></span>
+              <span><strong>{notification.sender_name}</strong><small>{notification.project_invitation_id ? 'Invitation' : 'Message'} · {notification.body || `Attachment: ${notification.attachment_name || 'file'}`}</small></span>
               <time>{new Date(notification.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
             </button>
           )) : <p>No new notifications.</p>}
@@ -2740,7 +2748,7 @@ function Applications({
   )
 }
 
-function ProjectInvitations({ profile }) {
+function ProjectInvitations({ profile, onRespond }) {
   const [invitations, setInvitations] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -2748,9 +2756,11 @@ function ProjectInvitations({ profile }) {
   const [response, setResponse] = useState('')
   const [inquiringId, setInquiringId] = useState(null)
   const [inquiry, setInquiry] = useState('')
+  const [respondingId, setRespondingId] = useState(null)
+  const [notice, setNotice] = useState('')
 
-  async function loadInvitations() {
-    setLoading(true)
+  async function loadInvitations(silent = false) {
+    if (!silent) setLoading(true)
     const { data, error: loadError } = await supabase.rpc('get_my_project_invitations')
     if (loadError) {
       console.error('Invitation load error:', loadError.message)
@@ -2762,28 +2772,35 @@ function ProjectInvitations({ profile }) {
     setLoading(false)
   }
 
-  useEffect(() => { loadInvitations() }, [])
+  useEffect(() => {
+    loadInvitations()
+    const refreshId = window.setInterval(() => loadInvitations(true), 12000)
+    return () => window.clearInterval(refreshId)
+  }, [profile?.id])
 
   async function respond(invitation, status) {
-    const { error: updateError } = await supabase
-      .from('project_invitations')
-      .update({
-        status,
-        student_response: status === 'Rejected' ? response.trim() || null : null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', invitation.invitation_id)
-      .eq('student_id', profile?.id)
+    if (respondingId) return
+    setRespondingId(invitation.invitation_id)
+    setError('')
+    setNotice('')
+    const { error: updateError } = await supabase.rpc('respond_to_project_invitation', {
+      p_invitation_id: invitation.invitation_id,
+      p_status: status,
+      p_student_response: status === 'Rejected' ? response.trim() || null : null,
+    })
+    setRespondingId(null)
 
     if (updateError) {
       console.error('Invitation response error:', updateError.message)
-      setError('Could not update this invitation.')
+      setError(updateError.message || 'Could not update this invitation.')
       return
     }
 
     setRejectingId(null)
     setResponse('')
+    setNotice(status === 'Accepted' ? 'Invitation accepted. You have joined the project.' : 'Invitation declined.')
     await loadInvitations()
+    await onRespond?.()
   }
 
   async function sendInquiry(invitation) {
@@ -2811,7 +2828,9 @@ function ProjectInvitations({ profile }) {
   return (
     <section className="content-card invitation-section">
       <SectionHeading eyebrow="Private opportunities" title="Project invitations" />
-      {loading ? <p>Loading invitations...</p> : error ? <p role="alert">{error}</p> : !invitations.length ? (
+      {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      {loading ? <p>Loading invitations...</p> : !invitations.length ? (
         <div className="empty-state"><Mail size={28} /><h3>No invitations yet</h3><p>Faculty invitations will appear here before a project is publicly posted.</p></div>
       ) : (
         <div className="invitation-list">
@@ -2823,13 +2842,13 @@ function ProjectInvitations({ profile }) {
               <small>From {invitation.faculty_name || 'Faculty member'}</small>
               {invitation.status === 'Pending' && (
                 <div className="invitation-actions">
-                  <button className="primary-dashboard-button" type="button" onClick={() => respond(invitation, 'Accepted')}>Accept invitation</button>
+                  <button className="primary-dashboard-button" type="button" disabled={Boolean(respondingId)} onClick={() => respond(invitation, 'Accepted')}>{respondingId === invitation.invitation_id ? 'Saving...' : 'Accept invitation'}</button>
                   <button className="outline-button" type="button" onClick={() => { setRejectingId(invitation.invitation_id); setInquiringId(null) }}>Reject</button>
                   <button className="text-button" type="button" onClick={() => { setInquiringId(invitation.invitation_id); setRejectingId(null) }}>Ask a question</button>
                 </div>
               )}
               {rejectingId === invitation.invitation_id && (
-                <div className="invitation-response"><textarea value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Optional reason for declining" /><button className="outline-button" type="button" onClick={() => respond(invitation, 'Rejected')}>Confirm rejection</button></div>
+                <div className="invitation-response"><textarea value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Optional reason for declining" /><button className="outline-button" type="button" disabled={Boolean(respondingId)} onClick={() => respond(invitation, 'Rejected')}>Confirm rejection</button></div>
               )}
               {inquiringId === invitation.invitation_id && (
                 <div className="invitation-response"><textarea value={inquiry} onChange={(event) => setInquiry(event.target.value)} placeholder="Write your question for the faculty member" /><button className="primary-dashboard-button" type="button" onClick={() => sendInquiry(invitation)}>Send question</button></div>
@@ -2843,9 +2862,9 @@ function ProjectInvitations({ profile }) {
   )
 }
 
-function Projects({ profile, projects, loading, error, onViewProject }) {
+function Projects({ profile, projects, loading, error, onViewProject, onInvitationRespond }) {
   return <div className="dashboard-section">
-    <ProjectInvitations profile={profile} />
+    <ProjectInvitations profile={profile} onRespond={onInvitationRespond} />
     <section className="content-card">
       <SectionHeading eyebrow="Project tracking" title="My projects" />
       {loading ? <p role="status">Loading your projects...</p> : error ? <p role="alert">{error}</p> : projects.length ?
@@ -2853,6 +2872,7 @@ function Projects({ profile, projects, loading, error, onViewProject }) {
           <span className="project-id">{project.program_type || 'Research project'}</span>
           <h3><button className="project-link" type="button" onClick={() => onViewProject(project)}>{project.title}</button></h3>
           <p>{project.description || project.abstract || ''}</p>
+          <small>{getRemainingSlots(project)} student places remaining</small>
           <button className="text-button" type="button" onClick={() => onViewProject(project)}>View details <ChevronRight size={15} /></button>
         </article>)}</div> :
         <div className="empty-state"><FolderKanban size={30} /><h3>No active projects yet</h3><p>Your projects will appear here once your applications are accepted.</p></div>}
@@ -3425,12 +3445,12 @@ export default function StudentDashboard({
     setStudentProfile(profile)
   }, [profile])
 
-  async function loadOpportunities() {
-    setOpportunitiesLoading(true)
+  async function loadOpportunities(silent = false) {
+    if (!silent) setOpportunitiesLoading(true)
     setOpportunitiesError('')
 
     const { data, error } = await supabase
-      .from('public_research_opportunities')
+      .from('student_research_opportunities')
       .select('*')
       .order('created_at', { ascending: false })
 
@@ -3451,14 +3471,14 @@ export default function StudentDashboard({
     loadOpportunities()
   }, [])
 
-  async function loadApplications() {
+  async function loadApplications(silent = false) {
     if (!studentProfile?.id) {
       setApplications([])
       setApplicationsLoading(false)
       return
     }
 
-    setApplicationsLoading(true)
+    if (!silent) setApplicationsLoading(true)
     setApplicationsError('')
 
     const { data, error } =
@@ -3494,6 +3514,11 @@ export default function StudentDashboard({
   useEffect(() => {
     if (studentProfile?.id) {
       loadApplications()
+      const refreshId = window.setInterval(() => {
+        loadApplications(true)
+        loadOpportunities(true)
+      }, 12000)
+      return () => window.clearInterval(refreshId)
     }
   }, [studentProfile?.id])
 
@@ -3709,7 +3734,7 @@ export default function StudentDashboard({
       />
     ),
 
-    projects: <Projects profile={studentProfile} projects={studentProjects} loading={applicationsLoading} error={applicationsError} onViewProject={setSelectedProject} />,
+    projects: <Projects profile={studentProfile} projects={studentProjects} loading={applicationsLoading} error={applicationsError} onViewProject={setSelectedProject} onInvitationRespond={() => Promise.all([loadApplications(true), loadOpportunities(true)])} />,
 
     ideas: (
       <Ideas

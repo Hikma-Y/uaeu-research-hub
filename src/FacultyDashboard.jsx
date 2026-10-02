@@ -206,7 +206,7 @@ function MessageNotificationBell({ profile, onNavigate }) {
       const [messagesResult, applicationsResult, announcementsResult] = await Promise.all([
         supabase
           .from('direct_messages')
-          .select('id, sender_id, body, attachment_name, created_at')
+          .select('id, sender_id, body, attachment_name, created_at, project_invitation_id')
           .eq('recipient_id', profile.id)
           .is('read_at', null)
           .order('created_at', { ascending: false })
@@ -235,11 +235,12 @@ function MessageNotificationBell({ profile, onNavigate }) {
 
       const messageNotifications = messages.map((message) => ({
         id: `message-${message.id}`,
-        kind: 'Message',
+        message_id: message.id,
+        kind: message.project_invitation_id ? 'Invitation' : 'Message',
         title: senderNames.get(message.sender_id) || 'University user',
         preview: message.body || `Attachment: ${message.attachment_name || 'file'}`,
         created_at: message.created_at,
-        target: 'messages',
+        target: message.project_invitation_id ? 'projects' : 'messages',
       }))
       const applicationNotifications = (applicationsResult.data || []).map((application) => ({
         id: `application-${application.id}`,
@@ -289,6 +290,11 @@ function MessageNotificationBell({ profile, onNavigate }) {
               type="button"
               onClick={() => {
                 setIsOpen(false)
+                if (notification.kind === 'Invitation') {
+                  supabase.rpc('mark_project_invitation_notification_read', { p_message_id: notification.message_id }).then(({ error }) => {
+                    if (!error) setNotifications((current) => current.filter((item) => item.id !== notification.id))
+                  })
+                }
                 onNavigate(notification.target)
               }}
             >
@@ -971,6 +977,7 @@ function FacultyProjects({
   onProjectsChanged,
   selectedProjectId,
   onProjectOpened,
+  onStudentRemoved,
 }) {
   const [showForm, setShowForm] =
     useState(false)
@@ -1005,9 +1012,21 @@ function FacultyProjects({
 
   const normalizedRankingQuery = studentRankingQuery.trim().toLowerCase()
   const filteredRankedStudents = rankedStudents
-    .map((student, index) => ({ student, rank: index + 1 }))
+    .map((student, index) => {
+      const isRegistered = applications.some((application) =>
+        application.opportunity_id === rankingProject?.id &&
+        application.student_id === student.student_id &&
+        application.status !== 'Rejected'
+      )
+      const invitationStatus = isRegistered || student.invitation_status === 'Accepted'
+        ? 'Accepted'
+        : student.invitation_status ? 'Pending' : 'Not invited'
+      return { student: { ...student, invitation_status: invitationStatus }, rank: index + 1 }
+    })
     .filter(({ student }) =>
-      (student.full_name || '').toLowerCase().includes(normalizedRankingQuery)
+      [student.full_name, student.university_id].some((value) =>
+        String(value ?? '').toLowerCase().includes(normalizedRankingQuery)
+      )
     )
 
   function createEmptyDraft() {
@@ -1387,12 +1406,12 @@ function FacultyProjects({
                 }
                 required
               >
-                <option value="draft">Draft / Private</option>
+                <option value="draft">Private</option>
                 <option value="public">Public / Open for applications</option>
               </select>
 
               <small>
-                Drafts are visible only to you. Public projects appear to eligible students and accept applications.
+                Private projects are visible to you and invited students. Public projects appear to eligible students and accept applications.
               </small>
             </label>
 
@@ -1455,8 +1474,8 @@ function FacultyProjects({
                 type="search"
                 value={studentRankingQuery}
                 onChange={(event) => setStudentRankingQuery(event.target.value)}
-                placeholder="Search students by name"
-                aria-label="Search ranked students by name"
+                placeholder="Search students by name or ID"
+                aria-label="Search ranked students by name or university ID"
               />
             </label>
             {!rankingLoading && rankedStudents.length > 0 && (
@@ -1464,7 +1483,7 @@ function FacultyProjects({
                 Showing {filteredRankedStudents.length} of {rankedStudents.length} students · {selectedStudentIds.length} selected
               </p>
             )}
-            {rankingLoading ? <p>Loading students...</p> : !rankedStudents.length ? <p>No active student profiles are available yet.</p> : !filteredRankedStudents.length ? <p>No students match your search. Try another name.</p> : (
+            {rankingLoading ? <p>Loading students...</p> : !rankedStudents.length ? <p>No active student profiles are available yet.</p> : !filteredRankedStudents.length ? <p>No students match your search. Try another name or ID.</p> : (
               <div className="faculty-ranking-list">
                 {filteredRankedStudents.map(({ student, rank }) => (
                   <label className="faculty-ranking-row" key={student.student_id}>
@@ -1473,7 +1492,7 @@ function FacultyProjects({
                     <span className="candidate-avatar">{getInitials(student.full_name)}</span>
                     <span><b>{student.full_name || 'Student'}</b><small>{student.major || student.department || 'Academic details not provided'}</small></span>
                     <em>GPA {student.gpa ?? '—'}</em>
-                    <small>{student.invitation_status || 'Not invited'}</small>
+                    <small className={`faculty-invitation-status ${student.invitation_status === 'Accepted' ? 'is-accepted' : student.invitation_status === 'Pending' ? 'is-pending' : ''}`}>{student.invitation_status}</small>
                   </label>
                 ))}
               </div>
@@ -1488,6 +1507,7 @@ function FacultyProjects({
       <ProjectDetails
         project={projects.find((project) => project.id === selectedProject.id) || selectedProject}
         applications={applications}
+        onStudentRemoved={onStudentRemoved}
         onBack={() => { setSelectedProject(null); closeForm(); setRankingProject(null) }}
         onEdit={() => {
           setRankingProject(null)
@@ -1586,7 +1606,7 @@ function FacultyProjects({
                     }`}
                   >
                     {project.visibility === 'draft'
-                      ? 'Draft / Private'
+                      ? 'Private'
                       : getRemainingSlots(project) === 0
                         ? 'Full'
                         : 'Public / Open'}
@@ -1642,13 +1662,33 @@ function FacultyProjects({
   )
 }
 
-function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemove, onCreateGroup, creatingGroup, groupNotice, managementPanel }) {
+function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemove, onCreateGroup, creatingGroup, groupNotice, managementPanel, onStudentRemoved }) {
   const [selectedStudentId, setSelectedStudentId] = useState(null)
+  const [removingStudentId, setRemovingStudentId] = useState(null)
+  const [studentRemovalError, setStudentRemovalError] = useState('')
+  const [studentRemovalNotice, setStudentRemovalNotice] = useState('')
+  async function removeStudent(application) {
+    if (removingStudentId) return
+    setRemovingStudentId(application.student_id)
+    setStudentRemovalError('')
+    setStudentRemovalNotice('')
+    const { error } = await supabase.rpc('remove_project_student', {
+      p_opportunity_id: String(project.id),
+      p_student_id: application.student_id,
+    })
+    if (error) {
+      setStudentRemovalError(error.message || 'Could not remove this student.')
+    } else {
+      await onStudentRemoved?.()
+      setStudentRemovalNotice(`${application.student_name || 'Student'} removed. Their place is available again.`)
+    }
+    setRemovingStudentId(null)
+  }
   const registeredStudents = applications.filter(
-    (application) => application.opportunity_id === project.id
+    (application) => application.opportunity_id === project.id && application.status !== 'Rejected'
   )
   const status = project.visibility === 'draft'
-    ? 'Draft / Private'
+    ? 'Private'
     : getRemainingSlots(project) === 0
       ? 'Full'
       : 'Public / Open'
@@ -1683,6 +1723,8 @@ function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemov
             <FacultyMilestones projectId={project.id} />
 
             <h3>Registered students</h3>
+            {studentRemovalError && <p role="alert" className="faculty-project-form__feedback is-error">{studentRemovalError}</p>}
+            {studentRemovalNotice && <p role="status" className="faculty-project-form__feedback is-success">{studentRemovalNotice}</p>}
             {registeredStudents.length ? (
               <div className="project-student-list">
                 {registeredStudents.map((application) => (
@@ -1692,6 +1734,9 @@ function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemov
                     </button>
                     <span>{application.student_major || application.student_department || 'Academic details not provided'}</span>
                     <em>{application.status || 'Submitted'}</em>
+                    <button className="project-student-remove" type="button" disabled={Boolean(removingStudentId)} aria-label={`Remove ${application.student_name || 'student'} from this project`} onClick={() => removeStudent(application)}>
+                      <Trash2 size={14} aria-hidden="true" />{removingStudentId === application.student_id ? 'Removing...' : 'Remove'}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -1712,7 +1757,7 @@ function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemov
 
         <footer className="project-details-page__actions">
           <button className="text-button" type="button" onClick={onEdit}><Pencil size={14} /> Edit project</button>
-          <button className="text-button" type="button" onClick={onRank}><UsersRound size={14} /> Rank students</button>
+          <button className="text-button" type="button" onClick={onRank}><UsersRound size={14} /> Invite</button>
           <button className="text-button" type="button" disabled={creatingGroup} onClick={onCreateGroup}><MessageSquare size={14} /> {creatingGroup ? 'Creating group…' : 'Create group chat'}</button>
           <button className="delete-project-button" type="button" onClick={onRemove}><Trash2 size={14} /> Remove</button>
         </footer>
@@ -1835,7 +1880,7 @@ function CandidateCard({
           {getInitials(studentName)}
         </span>
 
-        <span className="candidate-match">
+        <span className={`candidate-match candidate-match--${(entry.status || 'Pending').toLowerCase().replace(/\s+/g, '-')}`}>
           <Sparkles size={14} />
           {entry.status || 'Pending'}
         </span>
@@ -2297,14 +2342,14 @@ export default function FacultyDashboard({
     setFacultyProfile(profile)
   }, [profile])
 
-  async function loadFacultyProjects() {
+  async function loadFacultyProjects(silent = false) {
     if (!facultyProfile?.id) {
       setProjects([])
       setProjectsLoading(false)
       return
     }
 
-    setProjectsLoading(true)
+    if (!silent) setProjectsLoading(true)
     setProjectsError('')
 
     const [projectsResult, applicationsResult] = await Promise.all([
@@ -2346,14 +2391,14 @@ export default function FacultyDashboard({
     setProjectsLoading(false)
   }
 
-  async function loadFacultyApplications() {
+  async function loadFacultyApplications(silent = false) {
     if (!facultyProfile?.id) {
       setFacultyApplications([])
       setApplicationsLoading(false)
       return
     }
 
-    setApplicationsLoading(true)
+    if (!silent) setApplicationsLoading(true)
     setApplicationsError('')
 
     const { data, error } = await supabase
@@ -2375,6 +2420,11 @@ export default function FacultyDashboard({
   useEffect(() => {
     loadFacultyProjects()
     loadFacultyApplications()
+    const refreshId = window.setInterval(() => {
+      loadFacultyProjects(true)
+      loadFacultyApplications(true)
+    }, 12000)
+    return () => window.clearInterval(refreshId)
   }, [facultyProfile?.id])
 
   async function reviewApplication(applicationId, decision) {
@@ -2469,6 +2519,7 @@ export default function FacultyDashboard({
         loading={projectsLoading}
         error={projectsError}
         onProjectsChanged={loadFacultyProjects}
+        onStudentRemoved={() => Promise.all([loadFacultyProjects(true), loadFacultyApplications(true)])}
         selectedProjectId={projectToOpen}
         onProjectOpened={() => setProjectToOpen(null)}
       />

@@ -16,6 +16,34 @@ The active React application keeps Supabase authentication and the Supabase-conn
 
 Real `.env` files are ignored and are not included in this merged package.
 
+## Private project invitations
+
+After the existing project, messaging, and group-chat SQL setup, run
+`supabase/migrations/20261003_private_project_invitation_membership.sql` in the
+Supabase SQL Editor before using this frontend. Pending invitations expose private
+project details only to their recipients. Acceptance creates an accepted
+application, reserves one place, and joins any existing project group chat.
+Invitation and acceptance messages appear in the recipient's bell and open Projects.
+The dashboards refresh invitations, memberships, and remaining places every 12 seconds.
+
+The migration also repairs previously accepted invitations. If these exceed a
+project's capacity, it rolls back with an error naming the project; increase that
+project's capacity and rerun. The public opportunities view remains public only.
+
+Then run `supabase/migrations/20261003_faculty_remove_project_student.sql` to
+enable Remove beside registered students. Only the project owner can remove a
+registration. Removal frees the place and deletes that student's invitation and
+project group membership, revoking private-project access. Faculty can invite
+the student again later.
+
+Database regression tests use temporary PGlite databases, without live Supabase access:
+
+```powershell
+npm.cmd install --prefix "$env:TEMP/uaeu-invitation-db-tests" --no-audit --no-fund --ignore-scripts --package-lock=false @electric-sql/pglite
+$env:PGLITE_MODULE_PATH = Join-Path $env:TEMP 'uaeu-invitation-db-tests/node_modules/@electric-sql/pglite/dist/index.js'
+node --test supabase/tests/private_project_invitations.test.mjs
+```
+
 ---
 
 The original Login project README is preserved as `README.original.md`.

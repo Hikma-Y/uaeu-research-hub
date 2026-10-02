@@ -833,7 +833,9 @@
 .status--shortlisted { color: #6f568a; background: #f0ebf5; }
 .status--under-review { color: #8a6831; background: #f7efd9; }
 .status--accepted { color: #39725a; background: #e5f1ea; }
-.status--submitted { color: #416c8b; background: #e7f0f5; }
+.status--submitted,
+.status--pending { color: #806000; background: #fff3c4; }
+.status--rejected { color: #963e46; background: #f9eaeb; }
 .application-notice { margin: 14px 30px 0; padding: 11px 13px; border-radius: 10px; font-size: 0.7rem; line-height: 1.45; }
 .application-notice--success { color: #39725a; background: #e5f1ea; }
 .application-notice--error { color: #963e46; background: #f9eaeb; }
@@ -903,6 +905,12 @@
 .conversation:hover, .conversation.is-active { background: #f6efec; }
 .conversation-avatar { width: 39px; height: 39px; display: grid; place-items: center; color: white; border-radius: 50%; background: #775158; font-size: 0.67rem; font-weight: 700; }
 .conversation-avatar-wrap { position: relative; display: grid; }
+.conversation-avatar--group { border-radius: 12px; background: #eee3cf; color: #6d393d; border: 1px solid #d9c6a3; flex-shrink: 0; }
+.group-members-panel .group-member-search { margin: 0; padding: 8px 10px; }
+.group-members-panel .group-member-copy { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.group-member-row button { margin-left: auto; border: 1px solid #d9c6c0; border-radius: 7px; padding: 6px 10px; background: white; color: #6d393d; font: inherit; font-size: 0.6rem; cursor: pointer; flex-shrink: 0; }
+.group-member-row button:disabled { opacity: 0.65; cursor: wait; }
+.chat-panel > header { flex-wrap: wrap; }
 .conversation-copy { min-width: 0; display: grid; gap: 3px; }
 .conversation strong { min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 0.7rem; white-space: nowrap; }
 .conversation strong > span { overflow: hidden; text-overflow: ellipsis; }

@@ -37,6 +37,7 @@ on public.project_invitations for update
 using (student_id = auth.uid())
 with check (student_id = auth.uid() and status in ('Pending', 'Accepted', 'Rejected'));
 
+drop function if exists public.get_ranked_students_for_project(text);
 create or replace function public.get_ranked_students_for_project(p_opportunity_id text)
 returns table (
   student_id uuid,
@@ -46,7 +47,8 @@ returns table (
   gpa numeric,
   skills text[],
   research_interests text[],
-  invitation_status text
+  invitation_status text,
+  university_id text
 )
 language plpgsql security definer set search_path = public
 as $$
@@ -62,7 +64,7 @@ begin
     select p.id, p.full_name, p.major, p.department, p.gpa,
       coalesce(p.skills, '{}'::text[]),
       coalesce(p.research_interests, '{}'::text[]),
-      invitation.status
+      invitation.status, p.university_id::text
     from public.profiles p
     left join public.project_invitations invitation
       on invitation.opportunity_id = p_opportunity_id
