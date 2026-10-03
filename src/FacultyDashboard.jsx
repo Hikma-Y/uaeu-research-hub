@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import SupabaseMessages from './SupabaseMessages'
 import OrcidImport from './OrcidImport'
 import { applyOrcidSelection } from './lib/orcid'
+import { rankStudentsForProject } from './lib/matching'
 import {
   BarChart3,
   Bell,
@@ -481,7 +482,7 @@ function Overview({
 
           <div>
             <strong>
-              Later
+              Ready
             </strong>
 
             <span>
@@ -490,7 +491,7 @@ function Overview({
           </div>
 
           <small>
-            Recommendation algorithm not connected yet
+            Rank eligible students from each project
           </small>
         </button>
       </div>
@@ -995,6 +996,7 @@ function FacultyProjects({
     visibility: 'draft',
     student_capacity: '1',
     student_payment_aed: '',
+    minimum_gpa: '',
   })
 
   const [isSaving, setIsSaving] = useState(false)
@@ -1005,6 +1007,7 @@ function FacultyProjects({
   const [studentRankingQuery, setStudentRankingQuery] = useState('')
   const [selectedStudentIds, setSelectedStudentIds] = useState([])
   const [rankingLoading, setRankingLoading] = useState(false)
+  const [rankingNotice, setRankingNotice] = useState('')
   const [inviteNotice, setInviteNotice] = useState('')
   const [selectedProject, setSelectedProject] = useState(null)
   const [groupChatNotice, setGroupChatNotice] = useState('')
@@ -1040,6 +1043,7 @@ function FacultyProjects({
       visibility: 'draft',
       student_capacity: '1',
       student_payment_aed: '',
+      minimum_gpa: '',
     }
   }
 
@@ -1074,6 +1078,11 @@ function FacultyProjects({
         project.student_payment_aed === undefined
           ? ''
           : String(project.student_payment_aed),
+      minimum_gpa:
+        project.minimum_gpa === null ||
+        project.minimum_gpa === undefined
+          ? ''
+          : String(project.minimum_gpa),
     })
     setEditingProjectId(project.id)
     setFormError('')
@@ -1106,6 +1115,10 @@ function FacultyProjects({
       draft.student_payment_aed === ''
         ? null
         : Number(draft.student_payment_aed)
+    const minimumGpa =
+      draft.minimum_gpa === ''
+        ? null
+        : Number(draft.minimum_gpa)
 
     if (!Number.isInteger(studentCapacity) || studentCapacity < 1) {
       setFormError('Number of students needed must be a whole number of at least 1.')
@@ -1114,6 +1127,11 @@ function FacultyProjects({
 
     if (payment !== null && (!Number.isFinite(payment) || payment < 0)) {
       setFormError('Student payment must be a non-negative amount in AED.')
+      return
+    }
+
+    if (minimumGpa !== null && (!Number.isFinite(minimumGpa) || minimumGpa < 0 || minimumGpa > 4)) {
+      setFormError('Minimum GPA must be a number from 0.00 to 4.00.')
       return
     }
 
@@ -1130,6 +1148,7 @@ function FacultyProjects({
       visibility: draft.visibility,
       student_capacity: studentCapacity,
       student_payment_aed: payment,
+      minimum_gpa: minimumGpa,
     }
 
     setIsSaving(true)
@@ -1214,23 +1233,40 @@ function FacultyProjects({
     setRankedStudents([])
     setSelectedStudentIds([])
     setInviteNotice('')
+    setRankingNotice('')
     setRankingLoading(true)
 
-    const { data, error: rankingError } = await supabase
-      .rpc('get_ranked_students_for_project', {
+    let { data, error: rankingError } = await supabase
+      .rpc('get_match_candidates_for_project', {
         p_opportunity_id: project.id,
       })
 
+    // Existing installations can still open the pre-matching ranking while
+    // the new SQL migration is being applied. Its result is scored by the
+    // same shared matching helper once available.
+    if (rankingError) {
+      const fallback = await supabase
+        .rpc('get_ranked_students_for_project', {
+          p_opportunity_id: project.id,
+        })
+      data = fallback.data
+      rankingError = fallback.error
+    }
+
     if (rankingError) {
       console.error('Student ranking error:', rankingError.message)
-      setInviteNotice('Could not load the student ranking. Run the project invitations SQL setup first.')
+      setInviteNotice('Could not load the student ranking. Run the matching database migration first.')
     } else {
-      setRankedStudents(data || [])
+      const ranking = await rankStudentsForProject(project, data || [])
+      setRankedStudents(ranking.students)
+      setRankingNotice(ranking.notice)
     }
     setRankingLoading(false)
   }
 
-  function toggleStudent(studentId) {
+  function toggleStudent(student) {
+    if (!student?.is_eligible || student.invitation_status === 'Accepted') return
+    const studentId = student.student_id
     setSelectedStudentIds((current) =>
       current.includes(studentId)
         ? current.filter((id) => id !== studentId)
@@ -1394,6 +1430,28 @@ function FacultyProjects({
             </label>
 
             <label>
+              Minimum GPA
+
+              <input
+                type="number"
+                value={draft.minimum_gpa}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    minimum_gpa: event.target.value,
+                  })
+                }
+                min="0"
+                max="4"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="Optional"
+              />
+
+              <small>Optional hard rule. Students below this GPA cannot apply or be invited.</small>
+            </label>
+
+            <label>
               Project visibility
 
               <select
@@ -1464,10 +1522,10 @@ function FacultyProjects({
           <section className="faculty-ranking-panel">
             <Heading
               eyebrow="Pre-publication invitations"
-              title={`Students ranked by GPA for ${rankingProject.title}`}
+              title={`Students ranked by compatibility for ${rankingProject.title}`}
               action={<button className="text-button" type="button" onClick={() => setRankingProject(null)}>Close</button>}
             />
-            <p className="faculty-ranking-note">This temporary ranking uses GPA only. It can later be replaced by the matching algorithm score.</p>
+            <p className="faculty-ranking-note">{rankingNotice || 'This ranking combines research-topic relevance, skills, major fit, GPA, and experience. The score supports—not replaces—faculty judgement.'}</p>
             <label className="dashboard-search faculty-ranking-search">
               <Search size={18} aria-hidden="true" />
               <input
@@ -1487,11 +1545,11 @@ function FacultyProjects({
               <div className="faculty-ranking-list">
                 {filteredRankedStudents.map(({ student, rank }) => (
                   <label className="faculty-ranking-row" key={student.student_id}>
-                    <input type="checkbox" checked={selectedStudentIds.includes(student.student_id)} onChange={() => toggleStudent(student.student_id)} disabled={student.invitation_status === 'Accepted'} />
+                    <input type="checkbox" checked={selectedStudentIds.includes(student.student_id)} onChange={() => toggleStudent(student)} disabled={!student.is_eligible || student.invitation_status === 'Accepted'} />
                     <strong>#{rank}</strong>
                     <span className="candidate-avatar">{getInitials(student.full_name)}</span>
-                    <span><b>{student.full_name || 'Student'}</b><small>{student.major || student.department || 'Academic details not provided'}</small></span>
-                    <em>GPA {student.gpa ?? '—'}</em>
+                    <span><b>{student.full_name || 'Student'}</b><small>{student.major || student.department || 'Academic details not provided'}</small>{student.match_reasons?.length > 0 && <small className="faculty-ranking-reasons">{student.match_reasons.join(' · ')}</small>}</span>
+                    <em>{student.is_eligible ? `${student.match_score ?? '—'}% match` : 'Not eligible'}</em>
                     <small className={`faculty-invitation-status ${student.invitation_status === 'Accepted' ? 'is-accepted' : student.invitation_status === 'Pending' ? 'is-pending' : ''}`}>{student.invitation_status}</small>
                   </label>
                 ))}
@@ -1748,6 +1806,9 @@ function ProjectDetails({ project, applications, onBack, onEdit, onRank, onRemov
           <aside>
             <div><small>Department</small><strong>{project.department || 'Not set'}</strong></div>
             <div><small>Application deadline</small><strong>{project.deadline || 'Not set'}</strong></div>
+            {project.minimum_gpa !== null && project.minimum_gpa !== undefined && (
+              <div><small>Minimum GPA</small><strong>{project.minimum_gpa}</strong></div>
+            )}
             <div><small>Student places</small><strong>{getRemainingSlotsLabel(project)}</strong></div>
             {project.student_payment_aed !== null && project.student_payment_aed !== undefined && (
               <div><small>Student stipend</small><strong>AED {formatStudentPayment(project.student_payment_aed)}</strong></div>
@@ -2097,6 +2158,7 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
   const [ideas, setIdeas] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [invitationStatusError, setInvitationStatusError] = useState('')
   const [selectedStudentId, setSelectedStudentId] = useState(null)
   const [adoptingIdeaId, setAdoptingIdeaId] = useState(null)
   const [removingAdoptionId, setRemovingAdoptionId] = useState(null)
@@ -2114,6 +2176,7 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
   async function loadIdeas() {
     setLoading(true)
     setError('')
+    setInvitationStatusError('')
 
     const { data, error: loadError } = await supabase
       .from('research_ideas')
@@ -2139,7 +2202,22 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
       return
     }
 
-    setIdeas(data || [])
+    const { data: invitations, error: invitationError } = await supabase
+      .from('direct_messages')
+      .select('research_idea_id')
+      .eq('recipient_id', facultyProfile?.id)
+      .not('research_idea_id', 'is', null)
+
+    if (invitationError) {
+      console.error('Faculty idea invitations load error:', invitationError.message)
+      setInvitationStatusError('Invitation status could not be loaded. Please try again later.')
+    }
+
+    const invitedIdeaIds = new Set((invitations || []).map((invitation) => String(invitation.research_idea_id)))
+    setIdeas((data || []).map((idea) => ({
+      ...idea,
+      has_adoption_invite: invitedIdeaIds.has(String(idea.id)),
+    })))
     setLoading(false)
   }
 
@@ -2199,6 +2277,8 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
             <p>Student-submitted research ideas will appear here.</p>
           </div>
         ) : (
+          <>
+          {invitationStatusError && <p role="alert">{invitationStatusError}</p>}
           <div className="faculty-idea-grid">
             {ideas.map((idea) => (
               <article key={idea.id} onClick={(event) => {
@@ -2211,6 +2291,7 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
                     ? ` · ${idea.profiles.major}`
                     : ''}
                 </small>
+                {idea.has_adoption_invite && <small className="faculty-idea-invitation">A student invited you to adopt this idea</small>}
                 </div>
                 <div className="faculty-idea-actions">
                 {idea.adopted_by === facultyProfile?.id && (
@@ -2222,6 +2303,7 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
               </article>
             ))}
           </div>
+          </>
         )}
         <StudentProfileDialog studentId={selectedStudentId} onClose={() => setSelectedStudentId(null)} />
         {selectedIdea && (
@@ -2236,7 +2318,7 @@ function FacultyIdeas({ facultyProfile, onIdeaAdopted }) {
                     <button type="button" className="outline-button" disabled={removingAdoptionId !== null} onClick={() => removeAdoption(selectedIdea)}>{removingAdoptionId === selectedIdea.id ? 'Removing…' : 'Remove adoption'}</button>
                   )}
                   <div><small>Submitted</small><strong>{new Date(selectedIdea.created_at).toLocaleDateString()}</strong></div>
-                  <div><small>Status</small><strong>{selectedIdea.adopted_by ? selectedIdea.adopted_by === facultyProfile?.id ? 'Adopted by you' : 'Already adopted' : 'Available for adoption'}</strong></div>
+                  <div><small>Status</small><strong>{selectedIdea.adopted_by ? selectedIdea.adopted_by === facultyProfile?.id ? 'Adopted by you' : 'Already adopted' : selectedIdea.has_adoption_invite ? 'You have been invited to adopt this idea' : 'Available for adoption'}</strong></div>
                   <button type="button" className="outline-button" disabled={Boolean(selectedIdea.adopted_by) || adoptingIdeaId === selectedIdea.id} onClick={() => adoptIdea(selectedIdea)}>{selectedIdea.adopted_by ? 'Adopted' : adoptingIdeaId === selectedIdea.id ? 'Adopting…' : 'Adopt idea'}</button>
                 </aside>
               </div>

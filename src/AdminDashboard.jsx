@@ -996,19 +996,26 @@ function UserManagement({ data, onReload, logActivity }) {
 
     setSavingProfile(true)
     setMessage('')
-    const { error: identityError } = await supabase.functions.invoke('admin-update-user', {
-      body: {
-        user_id: selected.id,
-        full_name: profileDraft.full_name.trim(),
-        email: profileDraft.email.trim(),
-      },
-    })
+    const fullName = profileDraft.full_name.trim()
+    const email = profileDraft.email.trim()
+    const identityChanged = fullName !== (selected.full_name || '').trim()
+      || email.toLowerCase() !== (selected.email || '').trim().toLowerCase()
 
-    if (identityError) {
-      setSavingProfile(false)
-      console.error('Managed user identity update error:', identityError)
-      setMessage(identityError.message)
-      return
+    if (identityChanged) {
+      const { error: identityError } = await supabase.functions.invoke('admin-update-user', {
+        body: {
+          user_id: selected.id,
+          full_name: fullName,
+          email,
+        },
+      })
+
+      if (identityError) {
+        setSavingProfile(false)
+        console.error('Managed user identity update error:', identityError)
+        setMessage(identityError.message)
+        return
+      }
     }
 
     const { error } = await supabase.from('profiles').update(changes).eq('id', selected.id)

@@ -16,6 +16,10 @@ The active React application keeps Supabase authentication and the Supabase-conn
 
 Real `.env` files are ignored and are not included in this merged package.
 
+## Matching
+
+For the matching setup and database migration, see `AI_MATCHING_SETUP.md`. It covers faculty-to-student rankings, student project recommendations, student faculty recommendations, idea-to-faculty recommendations, and the optional hard minimum-GPA rule.
+
 ## Private project invitations
 
 After the existing project, messaging, and group-chat SQL setup, run
@@ -35,6 +39,15 @@ enable Remove beside registered students. Only the project owner can remove a
 registration. Removal frees the place and deletes that student's invitation and
 project group membership, revoking private-project access. Faculty can invite
 the student again later.
+
+## Student-to-faculty idea invitations
+
+After the research ideas and direct messaging SQL setup has been applied, run
+`supabase/migrations/20261004_research_idea_invite_tracking.sql` in the Supabase
+SQL Editor. It links messages sent from a student's saved idea to that idea, so
+the student can see which faculty have been invited and faculty can see the
+invitation in the Idea Portal. The migration validates that only the idea owner
+can create this association and that the recipient is a faculty member.
 
 Database regression tests use temporary PGlite databases, without live Supabase access:
 

@@ -499,6 +499,38 @@
   font-weight: 800;
 }
 
+.opportunity-card--ineligible {
+  border-color: #ecd5d4;
+  background: #fffafa;
+}
+
+.opportunity-card__availability .is-gpa-rule { color: #7352a2; }
+.opportunity-card__availability .is-ineligible { color: #a14347; }
+.matching-eligibility-note,
+.matching-reasons,
+.project-modal__eligibility {
+  margin: 14px 0 0;
+  color: #7e7370;
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+.matching-eligibility-note { color: #a14347; }
+.project-modal__eligibility { padding: 0 34px 22px; }
+.opportunity-matching-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 16px 0 0;
+  padding: 11px 13px;
+  border: 1px solid #e8dfda;
+  border-radius: 10px;
+  background: #f8f3ef;
+  color: #71383e;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.opportunity-matching-note svg { flex: 0 0 auto; margin-top: 1px; }
+
 .opportunity-card h3 {
   min-height: 46px;
   margin: 17px 0 7px;
@@ -873,6 +905,7 @@
 .idea-grid p { margin: 0 0 18px; color: #8b817c; font-size: 0.7rem; line-height: 1.55; }
 .idea-grid small { display: flex; align-items: center; gap: 6px; color: #6d393d; font-size: 0.62rem; font-weight: 700; }
 .idea-grid .idea-adopted-by { color: #39725a; }
+.idea-grid .idea-invitation-status { color: #8a6831; }
 .success-toast { display: flex; align-items: center; gap: 8px; padding: 13px 16px; color: #3b7358; border: 1px solid #cee2d6; border-radius: 11px; background: #eaf4ee; font-size: 0.7rem; font-weight: 700; }
 .idea-form { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(190px, 0.7fr); gap: 18px; }
 .idea-form label { display: grid; gap: 8px; color: #5c514e; font-size: 0.7rem; font-weight: 700; }

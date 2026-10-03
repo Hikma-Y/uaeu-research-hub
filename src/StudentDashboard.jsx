@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import SupabaseMessages from './SupabaseMessages'
-import { rankFacultyForIdea } from './lib/facultyMatching'
+import {
+  rankFacultyForIdea,
+  rankFacultyForStudent,
+  rankProjectsForStudent,
+} from './lib/matching'
 import {
   Bell,
   CalendarDays,
@@ -358,9 +362,10 @@ function OpportunityCard({
     : []
 
   const isFull = getRemainingSlots(opportunity) === 0
+  const isEligible = opportunity.is_eligible !== false
 
   return (
-    <article className="opportunity-card">
+    <article className={`opportunity-card ${isEligible ? '' : 'opportunity-card--ineligible'}`}>
       <div className="opportunity-card__top">
         <span className="project-id">
           {getProjectCode(opportunity)}
@@ -396,6 +401,12 @@ function OpportunityCard({
             Student stipend: AED {formatStudentPayment(opportunity.student_payment_aed)}
           </span>
         )}
+
+        {opportunity.minimum_gpa !== null && opportunity.minimum_gpa !== undefined && (
+          <span className={isEligible ? 'is-gpa-rule' : 'is-ineligible'}>
+            Minimum GPA: {opportunity.minimum_gpa}
+          </span>
+        )}
       </div>
 
       <div className="tag-list">
@@ -424,7 +435,7 @@ function OpportunityCard({
           <button
             className="card-apply-button"
             type="button"
-            disabled={isApplied || isFull || isApplying}
+            disabled={isApplied || isFull || isApplying || !isEligible}
             onClick={() => onApply(opportunity.id)}
           >
             {isApplied ? (
@@ -434,6 +445,8 @@ function OpportunityCard({
               </>
             ) : isFull ? (
               'Full'
+            ) : !isEligible ? (
+              'Not eligible'
             ) : isApplying ? (
               'Applying…'
             ) : (
@@ -442,6 +455,18 @@ function OpportunityCard({
           </button>
         </div>
       </div>
+
+      {!isEligible && (
+        <p className="matching-eligibility-note">
+          {opportunity.eligibility_reason || 'You do not meet this project’s minimum eligibility requirement.'}
+        </p>
+      )}
+
+      {isEligible && opportunity.match_reasons?.length > 0 && (
+        <p className="matching-reasons">
+          {opportunity.match_reasons.join(' · ')}
+        </p>
+      )}
     </article>
   )
 }
@@ -486,6 +511,7 @@ function ProjectDetailsModal({
     : []
 
   const isFull = getRemainingSlots(project) === 0
+  const isEligible = project.is_eligible !== false
 
   return (
     <div
@@ -628,6 +654,22 @@ function ProjectDetailsModal({
               </span>
             </div>
 
+            {project.minimum_gpa !== null && project.minimum_gpa !== undefined && (
+              <div>
+                <GraduationCap size={18} />
+
+                <span>
+                  <small>
+                    Minimum GPA
+                  </small>
+
+                  <strong>
+                    {project.minimum_gpa}
+                  </strong>
+                </span>
+              </div>
+            )}
+
             {hasStudentPayment(project) && (
               <div>
                 <span className="project-facts__currency">AED</span>
@@ -658,7 +700,7 @@ function ProjectDetailsModal({
           <button
             className="primary-dashboard-button"
             type="button"
-            disabled={isApplied || isFull || isApplying}
+            disabled={isApplied || isFull || isApplying || !isEligible}
             onClick={() => onApply(project.id)}
           >
             {isApplied ? (
@@ -668,6 +710,8 @@ function ProjectDetailsModal({
               </>
             ) : isFull ? (
               'Project full'
+            ) : !isEligible ? (
+              'Not eligible'
             ) : isApplying ? (
               'Submitting application…'
             ) : (
@@ -675,6 +719,8 @@ function ProjectDetailsModal({
             )}
           </button>
         </footer>
+        {!isEligible && <p className="project-modal__eligibility" role="status">{project.eligibility_reason || 'You do not meet this project’s minimum eligibility requirement.'}</p>}
+        {isEligible && project.match_reasons?.length > 0 && <p className="project-modal__eligibility">Why it matches: {project.match_reasons.join(' · ')}</p>}
       </section>
     </div>
   )
@@ -2319,8 +2365,8 @@ function Profile({
 }
 
 function Opportunities({
-  profile,
   opportunities,
+  matchingNotice,
   onViewProject,
   onApply,
   appliedProjectIds,
@@ -2440,6 +2486,13 @@ function Opportunities({
           </select>
         </div>
 
+        {matchingNotice && (
+          <p className="opportunity-matching-note" role="status">
+            <Sparkles size={14} />
+            {matchingNotice}
+          </p>
+        )}
+
         <div className="opportunity-grid">
           {visible.map((item) => (
             <div
@@ -2484,14 +2537,20 @@ function Opportunities({
   )
 }
 
-function FindFaculty({ profile, idea, onContact }) {
+function FindFaculty({ profile, idea, onContact, invitationRefreshKey }) {
   const [faculty, setFaculty] = useState([])
+  const [rankedFaculty, setRankedFaculty] = useState([])
   const [loading, setLoading] = useState(true)
+  const [rankingLoading, setRankingLoading] = useState(false)
+  const [rankingNotice, setRankingNotice] = useState('')
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [department, setDepartment] = useState('')
   const [interest, setInterest] = useState('')
   const [selected, setSelected] = useState(null)
+  const [invitedFacultyIds, setInvitedFacultyIds] = useState([])
+  const [invitationStatusError, setInvitationStatusError] = useState('')
+  const [invitationsLoading, setInvitationsLoading] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -2507,6 +2566,103 @@ function FindFaculty({ profile, idea, onContact }) {
   }, [])
 
   useEffect(() => {
+    if (!profile?.id || !idea?.id) {
+      setInvitedFacultyIds([])
+      setInvitationStatusError('')
+      setInvitationsLoading(false)
+      return undefined
+    }
+
+    let cancelled = false
+    async function loadInvitations() {
+      setInvitationsLoading(true)
+      const { data, error: invitationError } = await supabase
+        .from('direct_messages')
+        .select('recipient_id')
+        .eq('sender_id', profile.id)
+        .eq('research_idea_id', idea.id)
+
+      if (cancelled) return
+      if (invitationError) {
+        console.error('Faculty invitation status load error:', invitationError.message)
+        setInvitationStatusError('Previously sent invitations could not be loaded.')
+        setInvitedFacultyIds([])
+        setInvitationsLoading(false)
+        return
+      }
+
+      setInvitationStatusError('')
+      setInvitedFacultyIds([...new Set((data || []).map((invite) => String(invite.recipient_id)))])
+      setInvitationsLoading(false)
+    }
+
+    loadInvitations()
+    return () => { cancelled = true }
+  }, [profile?.id, idea?.id, invitationRefreshKey])
+
+  const hasMatchingProfile = Boolean(
+    profile?.major ||
+    profile?.department ||
+    profile?.research_experience ||
+    profile?.bio ||
+    profile?.has_research_experience ||
+    profile?.experience_entries?.length ||
+    profile?.skills?.length ||
+    profile?.research_interests?.length ||
+    profile?.relevant_coursework?.length
+  )
+  const profileKey = [
+    profile?.id,
+    profile?.major,
+    profile?.department,
+    profile?.research_experience,
+    profile?.bio,
+    profile?.has_research_experience,
+    (profile?.skills || []).join('|'),
+    (profile?.research_interests || []).join('|'),
+    (profile?.relevant_coursework || []).join('|'),
+    (profile?.research_tools || []).join('|'),
+    JSON.stringify(profile?.experience_entries || []),
+  ].join('::')
+  const ideaKey = [idea?.id, idea?.title, idea?.category, idea?.description].join('::')
+
+  useEffect(() => {
+    if (!faculty.length) {
+      setRankedFaculty([])
+      setRankingLoading(false)
+      return undefined
+    }
+
+    let cancelled = false
+    setRankingLoading(true)
+    const delay = idea ? 250 : 0
+    const timer = window.setTimeout(() => {
+      async function rank() {
+        const ranking = idea
+          ? await rankFacultyForIdea(idea, faculty)
+          : hasMatchingProfile
+            ? await rankFacultyForStudent(profile, faculty)
+            : {
+                faculty: [...faculty].sort((left, right) =>
+                  String(left.full_name || '').localeCompare(String(right.full_name || ''))
+                ),
+                notice: 'Add research interests, skills, or academic details to receive personalised faculty recommendations.',
+              }
+        if (cancelled) return
+        setRankedFaculty(ranking.faculty || [])
+        setRankingNotice(ranking.notice || '')
+        setRankingLoading(false)
+      }
+      rank()
+    }, delay)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [faculty, profileKey, ideaKey])
+
+  useEffect(() => {
     if (!selected) return
     const closeOnEscape = (event) => { if (event.key === 'Escape') setSelected(null) }
     document.addEventListener('keydown', closeOnEscape)
@@ -2515,23 +2671,8 @@ function FindFaculty({ profile, idea, onContact }) {
 
   const departments = [...new Set(faculty.map((person) => person.department).filter(Boolean))].sort()
   const interests = [...new Set(faculty.flatMap((person) => person.research_interests || []))].sort()
-  // Temporary deterministic matching; replace this scoring with AI results later.
-  const normalize = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
-  const studentInterests = [...new Set((profile?.research_interests || []).map(normalize).filter(Boolean))]
-  const studentSkills = [...new Set((profile?.skills || []).map(normalize).filter(Boolean))]
-  const studentDepartment = normalize(profile?.department)
-  const hasMatchingProfile = studentInterests.length > 0 || studentSkills.length > 0 || Boolean(studentDepartment)
-  const rankedFaculty = idea ? rankFacultyForIdea(faculty, idea) : faculty.map((person) => {
-    const facultyTopics = new Set([...(person.research_interests || []), ...(person.skills || [])].map(normalize).filter(Boolean))
-    const matchedInterests = studentInterests.filter((item) => facultyTopics.has(item))
-    const matchedSkills = studentSkills.filter((item) => facultyTopics.has(item))
-    const sameDepartment = Boolean(studentDepartment && studentDepartment === normalize(person.department))
-    const possible = studentInterests.length * 3 + studentSkills.length * 2 + (studentDepartment ? 1 : 0)
-    const score = matchedInterests.length * 3 + matchedSkills.length * 2 + (sameDepartment ? 1 : 0)
-    return { ...person, score, matchPercent: possible ? Math.round(score / possible * 100) : null, matchedInterests, matchedSkills, sameDepartment }
-  }).sort((a, b) => b.score - a.score || (a.full_name || '').localeCompare(b.full_name || '') || String(a.id).localeCompare(String(b.id)))
-    .map((person, index) => ({ ...person, rank: index + 1 }))
-  const visible = rankedFaculty.filter((person) =>
+  const rankedWithPosition = rankedFaculty.map((person, index) => ({ ...person, rank: index + 1 }))
+  const visible = rankedWithPosition.filter((person) =>
     (!department || person.department === department) &&
     (!interest || (person.research_interests || []).includes(interest)) &&
     `${person.full_name || ''} ${person.department || ''} ${(person.research_interests || []).join(' ')} ${(person.skills || []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())
@@ -2540,28 +2681,28 @@ function FindFaculty({ profile, idea, onContact }) {
   return <section className="content-card">
     <SectionHeading eyebrow="Idea Portal" title="Find faculty" action={<span className="count-pill">{faculty.length} faculty members</span>} />
     <p className="faculty-directory-intro">Discover potential supervisors and explore their research interests.</p>
-    <p className="faculty-ranking-announcement">{idea ? `Recommendations for “${idea.title || 'Your draft idea'}”, based on topic overlap with faculty research interests, expertise, and biography.` : 'Write an idea or choose one of your submitted ideas to get faculty recommendations. You can also browse faculty below.'}</p>
-    {idea && !rankedFaculty.some((person) => person.score > 0) && <p className="faculty-directory-intro">No matching expertise found yet. Add more specific topics to your idea or browse faculty profiles.</p>}
+    <p className="faculty-ranking-announcement">{idea ? `Recommendations for “${idea.title || 'Your draft idea'}” use semantic topic relevance, faculty expertise, and supervision availability.` : 'Faculty are ranked from your saved research profile. You can also choose one of your ideas for idea-specific recommendations.'}</p>
     <div className="search-toolbar faculty-directory-toolbar">
       <label className="dashboard-search"><Search size={19} /><input aria-label="Search faculty" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, research topic, or expertise" /></label>
       <select aria-label="Faculty department" value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">All departments</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
       <select aria-label="Faculty research interest" value={interest} onChange={(event) => setInterest(event.target.value)}><option value="">All research interests</option>{interests.map((item) => <option key={item}>{item}</option>)}</select>
     </div>
     {loading ? <p role="status">Loading faculty profiles…</p> : error ? <p role="alert">{error}</p> : <>
-      <p className="faculty-directory-intro" role="status">{visible.length} faculty members · {idea ? 'Ranked by idea relevance; ties ordered alphabetically' : hasMatchingProfile ? 'Ranked by profile match; ties ordered alphabetically' : 'Listed alphabetically'}</p>
+      {rankingNotice && <p className="opportunity-matching-note" role="status"><Sparkles size={14} />{rankingNotice}</p>}
+      {invitationStatusError && <p className="faculty-match-reason" role="alert">{invitationStatusError}</p>}
+      <p className="faculty-directory-intro" role="status">{rankingLoading ? 'Updating recommendations… ' : ''}{visible.length} faculty members · {idea ? 'Ranked by idea compatibility' : hasMatchingProfile ? 'Ranked by profile compatibility' : 'Listed alphabetically'}</p>
       <div className="opportunity-grid">
         {visible.map((person) => <article className="faculty-directory-card" key={person.id}>
-          {(idea || hasMatchingProfile) && <div className="faculty-match-heading"><span className="count-pill">#{person.rank}</span><strong>{idea ? person.score > 0 ? 'Relevant expertise' : 'No topic overlap' : `${person.matchPercent}% profile overlap`}</strong></div>}
+          {(idea || hasMatchingProfile) && <div className="faculty-match-heading"><span className="count-pill">#{person.rank}</span><strong>{person.is_available === false ? 'Not available' : `${person.match_score ?? 0}% match`}</strong></div>}
           <div className="faculty-directory-identity"><span className="faculty-directory-avatar">{getInitials(person.full_name)}</span><div><h3>{person.full_name || 'Faculty member'}</h3><p>{person.department || 'Department not specified'}</p></div></div>
           <h4>Research interests</h4>
           <div className="tag-list">{person.research_interests?.length ? person.research_interests.map((item) => <span key={item}>{item}</span>) : <span>Not added yet</span>}</div>
-          {idea ? <p className="faculty-match-reason">{person.matchedTopics.length ? `Relevant topics: ${person.matchedTopics.join(', ')}` : person.matchedWords.length ? `Matching keywords: ${person.matchedWords.join(', ')}` : 'No matching topics in the available profile.'}</p> : hasMatchingProfile && <p className="faculty-match-reason">{[
-            person.matchedInterests.length ? `Shared interests: ${person.matchedInterests.join(', ')}` : '',
-            person.matchedSkills.length ? `Shared skills: ${person.matchedSkills.join(', ')}` : '',
-            person.sameDepartment ? 'Same department' : '',
-          ].filter(Boolean).join(' · ') || 'No shared profile details yet.'}</p>}
+          {(idea || hasMatchingProfile) && <p className="faculty-match-reason">{person.match_reasons?.join(' · ') || 'No shared profile details have been added yet.'}</p>}
+          {person.is_available === false && <p className="faculty-match-reason">{person.availability_reason || 'This faculty member is not currently accepting new students.'}</p>}
           <button className="text-button" type="button" onClick={() => setSelected(person)}>View Profile <ChevronRight size={15} /></button>
-          <button className="text-button" type="button" onClick={() => onContact(person, idea)}><Mail size={15} /> {idea ? 'Invite to discuss idea' : 'Message faculty'}</button>
+          <button className="text-button" type="button" disabled={invitationsLoading || invitedFacultyIds.includes(String(person.id))} onClick={() => onContact(person, idea)}>
+            {invitedFacultyIds.includes(String(person.id)) ? <><Check size={15} /> Invitation sent</> : invitationsLoading ? 'Checking invitation…' : <><Mail size={15} /> {idea ? 'Invite to discuss idea' : 'Message faculty'}</>}
+          </button>
         </article>)}
         {!visible.length && <div className="empty-state"><UsersRound size={30} /><h3>{faculty.length ? 'No faculty match your search' : 'No faculty profiles available yet'}</h3><p>{faculty.length ? 'Try another keyword or change your filters.' : 'Faculty members will appear here as their profiles become available.'}</p></div>}
       </div>
@@ -2884,12 +3025,15 @@ function Ideas({ profile, onOpenConversation }) {
   const recommendationsRef = useRef(null)
   const [recommendationIdea, setRecommendationIdea] = useState(null)
   const [contact, setContact] = useState(null)
+  const [contactIdeaId, setContactIdeaId] = useState(null)
   const [contactBody, setContactBody] = useState('')
   const [contactError, setContactError] = useState('')
   const [contactSending, setContactSending] = useState(false)
+  const [inviteRefreshKey, setInviteRefreshKey] = useState(0)
 
   function startContact(person, idea) {
     setContact(person)
+    setContactIdeaId(idea?.id || null)
     setContactError('')
     setContactBody(idea ? `Hello ${person.full_name || 'Doctor'},\n\nI would like to invite you to discuss my research idea: ${idea.title || 'Untitled idea'}.\n\n${idea.description || ''}\n\nWould you be interested in discussing this idea or supervising the research?` : '')
   }
@@ -2899,13 +3043,24 @@ function Ideas({ profile, onOpenConversation }) {
     if (!profile?.id || !contact || !contactBody.trim() || contactSending) return
     setContactSending(true)
     setContactError('')
-    const { error } = await supabase.from('direct_messages').insert({ sender_id: profile.id, recipient_id: contact.id, body: contactBody.trim() })
+    const { error } = await supabase.from('direct_messages').insert({
+      sender_id: profile.id,
+      recipient_id: contact.id,
+      body: contactBody.trim(),
+      research_idea_id: contactIdeaId,
+    })
     setContactSending(false)
     if (error) {
       setContactError('Could not send your message. Please try again.')
       return
     }
-    onOpenConversation(contact.id)
+    if (contactIdeaId) setInviteRefreshKey((current) => current + 1)
+    setContact(null)
+    if (contactIdeaId) {
+      await loadIdeas()
+    } else {
+      onOpenConversation(contact.id)
+    }
   }
   const [showForm, setShowForm] =
     useState(false)
@@ -2932,6 +3087,7 @@ function Ideas({ profile, onOpenConversation }) {
   ] = useState(false)
 
   const [deletingIdeaId, setDeletingIdeaId] = useState(null)
+  const [invitationStatusError, setInvitationStatusError] = useState('')
 
   const [
     draftIdea,
@@ -2947,6 +3103,7 @@ function Ideas({ profile, onOpenConversation }) {
   async function loadIdeas() {
     setIdeasLoading(true)
     setIdeasError('')
+    setInvitationStatusError('')
 
     const { data, error } =
       await supabase
@@ -2980,7 +3137,59 @@ function Ideas({ profile, onOpenConversation }) {
       .from('adopted_idea_faculty')
       .select('idea_id, faculty_name')
     const facultyNames = (adopters || []).reduce((names, item) => ({ ...names, [String(item.idea_id)]: item.faculty_name }), {})
-    setIdeas((data || []).map((idea) => ({ ...idea, adopter_name: facultyNames[String(idea.id)] || null })))
+
+    const { data: ideaInvitations, error: invitationError } = await supabase
+      .from('direct_messages')
+      .select('research_idea_id, recipient_id')
+      .eq('sender_id', profile?.id)
+      .not('research_idea_id', 'is', null)
+
+    let invitedFacultyByIdea = {}
+    if (invitationError) {
+      console.error('Research idea invitations load error:', invitationError.message)
+      setInvitationStatusError('Invitation status could not be loaded. Please try again later.')
+    } else {
+      setInvitationStatusError('')
+      const recipientsByIdea = new Map()
+      for (const invitation of ideaInvitations || []) {
+        const ideaId = String(invitation.research_idea_id)
+        const recipients = recipientsByIdea.get(ideaId) || new Set()
+        recipients.add(String(invitation.recipient_id))
+        recipientsByIdea.set(ideaId, recipients)
+      }
+
+      const recipientIds = [...new Set([...recipientsByIdea.values()].flatMap((ids) => [...ids]))]
+      let facultyNamesById = {}
+      if (recipientIds.length) {
+        const { data: directory, error: directoryError } = await supabase
+          .from('message_directory')
+          .select('id, full_name')
+          .in('id', recipientIds)
+
+        if (directoryError) {
+          console.error('Invited faculty names load error:', directoryError.message)
+          setInvitationStatusError('Invitation status is available, but faculty names could not be loaded.')
+        } else {
+          facultyNamesById = (directory || []).reduce((names, person) => ({
+            ...names,
+            [String(person.id)]: person.full_name || 'Faculty member',
+          }), {})
+        }
+      }
+
+      invitedFacultyByIdea = Object.fromEntries(
+        [...recipientsByIdea].map(([ideaId, recipients]) => [
+          ideaId,
+          [...recipients].map((id) => facultyNamesById[id] || 'Faculty member'),
+        ])
+      )
+    }
+
+    setIdeas((data || []).map((idea) => ({
+      ...idea,
+      adopter_name: facultyNames[String(idea.id)] || null,
+      invited_faculty: invitedFacultyByIdea[String(idea.id)] || [],
+    })))
     setIdeasLoading(false)
   }
 
@@ -3321,6 +3530,8 @@ function Ideas({ profile, onOpenConversation }) {
             </p>
           </div>
         ) : (
+          <>
+          {invitationStatusError && <p role="alert">{invitationStatusError}</p>}
           <div className="idea-grid">
             {ideas.map((idea) => (
               <article key={idea.id}>
@@ -3344,6 +3555,10 @@ function Ideas({ profile, onOpenConversation }) {
 
                   {idea.adopter_name && (
                     <small className="idea-adopted-by">Adopted by {idea.adopter_name}</small>
+                  )}
+
+                  {idea.student_id === profile?.id && idea.invited_faculty?.length > 0 && (
+                    <small className="idea-invitation-status">Invitation sent to {idea.invited_faculty.join(', ')}</small>
                   )}
 
                   {idea.student_id && idea.student_id !== profile?.id && (
@@ -3376,9 +3591,10 @@ function Ideas({ profile, onOpenConversation }) {
               </article>
             ))}
           </div>
+          </>
         )}
       </section>
-      <div ref={recommendationsRef}><FindFaculty profile={profile} idea={showForm && (draftIdea.title.trim() || draftIdea.description.trim()) ? { ...draftIdea, category: draftIdea.category === 'Other' ? draftIdea.custom_category : draftIdea.category } : recommendationIdea} onContact={startContact} /></div>
+      <div ref={recommendationsRef}><FindFaculty profile={profile} idea={showForm && (draftIdea.title.trim() || draftIdea.description.trim()) ? { ...draftIdea, category: draftIdea.category === 'Other' ? draftIdea.custom_category : draftIdea.category } : recommendationIdea} onContact={startContact} invitationRefreshKey={inviteRefreshKey} /></div>
     </div>
   )
 }
@@ -3420,6 +3636,8 @@ export default function StudentDashboard({
     setOpportunitiesError,
   ] = useState('')
 
+  const [matchingNotice, setMatchingNotice] = useState('')
+
   const [
     applications,
     setApplications,
@@ -3445,6 +3663,21 @@ export default function StudentDashboard({
     setStudentProfile(profile)
   }, [profile])
 
+  const studentMatchingKey = [
+    studentProfile?.id,
+    studentProfile?.major,
+    studentProfile?.department,
+    studentProfile?.gpa,
+    studentProfile?.research_experience,
+    studentProfile?.bio,
+    studentProfile?.has_research_experience,
+    (studentProfile?.skills || []).join('|'),
+    (studentProfile?.research_interests || []).join('|'),
+    (studentProfile?.relevant_coursework || []).join('|'),
+    (studentProfile?.research_tools || []).join('|'),
+    JSON.stringify(studentProfile?.experience_entries || []),
+  ].join('::')
+
   async function loadOpportunities(silent = false) {
     if (!silent) setOpportunitiesLoading(true)
     setOpportunitiesError('')
@@ -3462,14 +3695,23 @@ export default function StudentDashboard({
     }
 
     const publicOpportunities = data || []
-    setOpportunities(publicOpportunities)
+    let rankedOpportunities = publicOpportunities
+    if (studentProfile?.id) {
+      const ranking = await rankProjectsForStudent(studentProfile, publicOpportunities)
+      rankedOpportunities = ranking.projects
+      setOpportunities(rankedOpportunities)
+      setMatchingNotice(ranking.notice)
+    } else {
+      setOpportunities(publicOpportunities)
+      setMatchingNotice('')
+    }
     setOpportunitiesLoading(false)
-    return publicOpportunities
+    return rankedOpportunities
   }
 
   useEffect(() => {
-    loadOpportunities()
-  }, [])
+    if (studentProfile?.id) loadOpportunities()
+  }, [studentMatchingKey])
 
   async function loadApplications(silent = false) {
     if (!studentProfile?.id) {
@@ -3520,7 +3762,7 @@ export default function StudentDashboard({
       }, 12000)
       return () => window.clearInterval(refreshId)
     }
-  }, [studentProfile?.id])
+  }, [studentMatchingKey])
 
   const appliedProjectIds =
     applications.map(
@@ -3557,6 +3799,14 @@ export default function StudentDashboard({
       setApplicationNotice({
         type: 'error',
         message: 'This project is full or is no longer available for applications.',
+      })
+      return
+    }
+
+    if (project.is_eligible === false) {
+      setApplicationNotice({
+        type: 'error',
+        message: project.eligibility_reason || 'You do not meet this project’s minimum eligibility requirement.',
       })
       return
     }
@@ -3713,8 +3963,8 @@ export default function StudentDashboard({
 
     opportunities: (
       <Opportunities
-        profile={studentProfile}
         opportunities={opportunities}
+        matchingNotice={matchingNotice}
         onViewProject={setSelectedProject}
         onApply={applyToProject}
         appliedProjectIds={appliedProjectIds}

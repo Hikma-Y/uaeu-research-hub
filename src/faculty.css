@@ -241,6 +241,8 @@
 .faculty-ranking-row > span:nth-of-type(2) { display: grid; min-width: 0; gap: 3px; }
 .faculty-ranking-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; }
 .faculty-ranking-row small { color: #8e8380; font-size: 0.6rem; }
+.faculty-ranking-row .faculty-ranking-reasons { color: #6d393d; line-height: 1.35; white-space: normal; }
+.faculty-ranking-row:has(input:disabled) { background: #faf7f5; cursor: not-allowed; }
 .faculty-ranking-row .faculty-invitation-status.is-accepted { color: #166534; background: #dcfce7; padding: 5px 9px; border-radius: 999px; font-weight: 700; }
 .faculty-ranking-row .faculty-invitation-status.is-pending { color: #854d0e; background: #fef9c3; padding: 5px 9px; border-radius: 999px; font-weight: 700; }
 .faculty-ranking-row em { color: #6d393d; font-size: 0.66rem; font-style: normal; font-weight: 800; white-space: nowrap; }
@@ -811,6 +813,7 @@
 .faculty-idea-grid article { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .faculty-idea-summary { min-width: 0; }
 .faculty-idea-summary small { color: #8d827e; font-size: 0.65rem; }
+.faculty-idea-summary .faculty-idea-invitation { display: block; margin-top: 7px; color: #8a6831; font-weight: 800; }
 .faculty-idea-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }
 .faculty-idea-grid .idea-student-button { min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; font: inherit; }
 

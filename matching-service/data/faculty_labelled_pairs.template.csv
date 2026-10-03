@@ -1,0 +1,2 @@
+pair_id,student_text,project_text,semantic_label,split,reviewer_notes
+PAIR-001,"anonymised interests, skills, and experience","project description and required skills",0.85,train,"Example only - replace with faculty-reviewed data"
