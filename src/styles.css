@@ -381,6 +381,15 @@ a {
   color: #9ba6a2;
 }
 
+.input-wrap select {
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
 .icon-button {
   width: 32px;
   height: 32px;
@@ -478,6 +487,14 @@ a {
 .primary-button:disabled {
   cursor: wait;
   opacity: 0.86;
+}
+
+.registration-submit:disabled {
+  cursor: default;
+}
+
+.registration-submit[aria-busy="true"] {
+  cursor: wait;
 }
 
 .secondary-button {

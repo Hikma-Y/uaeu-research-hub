@@ -12,7 +12,37 @@ The active React application keeps Supabase authentication and the Supabase-conn
 4. Run `npm run dev`.
 5. Only if you are working on the preserved Express backend, run `npm install` inside `backend/` and create `backend/.env` from `backend/.env.example`.
 
+## Student and faculty self-registration
+
+Run `supabase/migrations/20261010_self_registration_consent.sql` in Supabase SQL
+Editor before using **Create an account** on the sign-in page. Enable email
+sign-ups and email confirmation in Supabase Authentication settings, and add
+your frontend URL to the allowed redirect URLs. The form supports student and
+faculty accounts only, automatically assigns student accounts to emails starting with
+a digit and faculty accounts to emails starting with a letter. It requires a full
+UAEU email and a nine-digit university ID for students
+(faculty ID is optional), and
+blocks submission until research-background sharing consent is checked.
+The database rejects public account creation without consent and creates the
+profile in the same transaction, recording the consent time and version.
+Trusted administrator-created accounts retain their existing flow.
+If the hosted database has an existing `auth.users` profile-creation trigger,
+consolidate it with this migration's profile trigger before applying the migration
+to avoid inserting the same profile twice.
+
+Sharing consent applies within UAEU Research Hub for matching and collaboration.
+Account and profile data are stored in the configured Supabase project; running
+the frontend locally does not mean the database is stored on this computer.
+
 ## Security
+
+Run `supabase/migrations/20261011_require_complete_profiles.sql` to enforce
+profile completion before research interactions. Both roles require department,
+biography/research background, skills, and research interests. Students additionally
+require major, year of study, and GPA. Registration and browsing remain available;
+blocked actions direct users to My profile. Faculty IDs, documents, social links,
+and prior projects are not completion requirements. Rerun this migration if you
+install additional interaction tables from the existing SQL setup later.
 
 Real `.env` files are ignored and are not included in this merged package.
 

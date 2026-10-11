@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 from fastapi import FastAPI
@@ -30,7 +30,7 @@ class ProjectInput(BaseModel):
     department: str = ""
     tags: list[str] = Field(default_factory=list)
     requirements: list[str] = Field(default_factory=list)
-    minimum_gpa: float | None = None
+    minimum_gpa: Optional[float] = None
 
 
 class ProjectCandidate(ProjectInput):
@@ -39,28 +39,28 @@ class ProjectCandidate(ProjectInput):
 
 class StudentInput(BaseModel):
     student_id: str
-    major: str | None = None
-    department: str | None = None
-    gpa: float | None = None
+    major: Optional[str] = None
+    department: Optional[str] = None
+    gpa: Optional[float] = None
     skills: list[str] = Field(default_factory=list)
     research_interests: list[str] = Field(default_factory=list)
     relevant_coursework: list[str] = Field(default_factory=list)
     research_tools: list[str] = Field(default_factory=list)
     has_research_experience: bool = False
-    research_experience: str | None = None
-    bio: str | None = None
+    research_experience: Optional[str] = None
+    bio: Optional[str] = None
     experience_entries: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class FacultyInput(BaseModel):
     faculty_id: str
     full_name: str = ""
-    department: str | None = None
+    department: Optional[str] = None
     research_interests: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
-    research_experience: str | None = None
-    supervision_status: str | None = "available"
-    supervision_capacity: float | None = None
+    research_experience: Optional[str] = None
+    supervision_status: Optional[str] = "available"
+    supervision_capacity: Optional[float] = None
 
 
 class IdeaInput(BaseModel):
@@ -98,7 +98,7 @@ class CandidateResult(BaseModel):
     gpa_score: int
     experience_score: int
     eligible: bool
-    eligibility_reason: str | None = None
+    eligibility_reason: Optional[str] = None
     reasons: list[str]
 
 
@@ -111,7 +111,7 @@ class ProjectResult(BaseModel):
     gpa_score: int
     experience_score: int
     eligible: bool
-    eligibility_reason: str | None = None
+    eligibility_reason: Optional[str] = None
     reasons: list[str]
 
 
@@ -123,7 +123,7 @@ class FacultyResult(BaseModel):
     skills_score: int
     department_score: int
     available: bool
-    availability_reason: str | None = None
+    availability_reason: Optional[str] = None
     reasons: list[str]
 
 
@@ -289,7 +289,7 @@ def coverage(wanted: list[str], available: list[str]) -> tuple[float, list[str]]
     return len(matched) / len(wanted), matched
 
 
-def gpa_eligibility(project: ProjectInput, student: StudentInput) -> tuple[bool, str | None]:
+def gpa_eligibility(project: ProjectInput, student: StudentInput) -> tuple[bool, Optional[str]]:
     if project.minimum_gpa is None:
         return True, None
     if student.gpa is None:
@@ -329,7 +329,7 @@ def structured_scores(project: ProjectInput, student: StudentInput) -> tuple[flo
     return skill_score, major_score, gpa_score, experience_score, reasons
 
 
-def supervision_availability(faculty: FacultyInput) -> tuple[bool, float, str | None]:
+def supervision_availability(faculty: FacultyInput) -> tuple[bool, float, Optional[str]]:
     status = clean_text(faculty.supervision_status or "available")
     if "unavailable" in status or "full" in status or faculty.supervision_capacity == 0:
         return False, 0.0, "Not currently accepting new students"
@@ -551,7 +551,7 @@ class SemanticMatcher:
         )
 
 
-matcher: SemanticMatcher | None = None
+matcher: Optional[SemanticMatcher] = None
 
 
 def get_matcher() -> SemanticMatcher:

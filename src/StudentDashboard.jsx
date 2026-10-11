@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 import SupabaseMessages from './SupabaseMessages'
+import { missingProfileFields, guardProfileInteraction } from './lib/profileCompletion'
 import {
   rankFacultyForIdea,
   rankFacultyForStudent,
@@ -1534,24 +1535,7 @@ function Profile({
     profile?.full_name
   )
 
-  const completionChecks = [
-    profile?.headline,
-    profile?.major,
-    profile?.year_of_study,
-    profile?.bio,
-    profile?.has_research_experience
-      ? profile?.experience_entries?.length
-      : true,
-    profile?.skills?.length,
-    profile?.research_interests?.length,
-    profile?.student_projects?.length,
-    profile?.linkedin_url || profile?.github_url,
-    documents.length,
-  ]
-  const completion = Math.round(
-    (completionChecks.filter(Boolean).length /
-      completionChecks.length) * 100
-  )
+  const completion = Math.round(((7 - missingProfileFields(profile).length) / 7) * 100)
 
   return (
     <div className="dashboard-section profile-page-layout">
@@ -2537,7 +2521,7 @@ function Opportunities({
   )
 }
 
-function FindFaculty({ profile, idea, onContact, invitationRefreshKey }) {
+function FindFaculty({ profile, idea, onContact, invitationRefreshKey, profileRequest }) {
   const [faculty, setFaculty] = useState([])
   const [rankedFaculty, setRankedFaculty] = useState([])
   const [loading, setLoading] = useState(true)
@@ -2551,6 +2535,13 @@ function FindFaculty({ profile, idea, onContact, invitationRefreshKey }) {
   const [invitedFacultyIds, setInvitedFacultyIds] = useState([])
   const [invitationStatusError, setInvitationStatusError] = useState('')
   const [invitationsLoading, setInvitationsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!profileRequest || loading) return
+    const person = faculty.find((item) => item.id === profileRequest.id)
+    if (person) setSelected(person)
+    else setError('This faculty profile could not be loaded. Please try again later.')
+  }, [profileRequest, faculty, loading])
 
   useEffect(() => {
     let cancelled = false
@@ -3023,6 +3014,7 @@ function Projects({ profile, projects, loading, error, onViewProject, onInvitati
 
 function Ideas({ profile, onOpenConversation }) {
   const recommendationsRef = useRef(null)
+  const [facultyProfileRequest, setFacultyProfileRequest] = useState(null)
   const [recommendationIdea, setRecommendationIdea] = useState(null)
   const [contact, setContact] = useState(null)
   const [contactIdeaId, setContactIdeaId] = useState(null)
@@ -3550,11 +3542,11 @@ function Ideas({ profile, onOpenConversation }) {
                 <div className="idea-card-footer">
                   <small>
                     <UsersRound size={15} />
-                    Submitted by Student
+                    {idea.student_id && idea.student_id === profile?.id ? 'Submitted by me' : 'Submitted by Student'}
                   </small>
 
                   {idea.adopter_name && (
-                    <small className="idea-adopted-by">Adopted by {idea.adopter_name}</small>
+                    <small className="idea-adopted-by">Adopted by <button className="idea-faculty-profile-button" type="button" onClick={() => setFacultyProfileRequest({ id: idea.adopted_by })}>{idea.adopter_name}</button></small>
                   )}
 
                   {idea.student_id === profile?.id && idea.invited_faculty?.length > 0 && (
@@ -3594,7 +3586,7 @@ function Ideas({ profile, onOpenConversation }) {
           </>
         )}
       </section>
-      <div ref={recommendationsRef}><FindFaculty profile={profile} idea={showForm && (draftIdea.title.trim() || draftIdea.description.trim()) ? { ...draftIdea, category: draftIdea.category === 'Other' ? draftIdea.custom_category : draftIdea.category } : recommendationIdea} onContact={startContact} invitationRefreshKey={inviteRefreshKey} /></div>
+      <div ref={recommendationsRef}><FindFaculty profile={profile} idea={showForm && (draftIdea.title.trim() || draftIdea.description.trim()) ? { ...draftIdea, category: draftIdea.category === 'Other' ? draftIdea.custom_category : draftIdea.category } : recommendationIdea} onContact={startContact} invitationRefreshKey={inviteRefreshKey} profileRequest={facultyProfileRequest} /></div>
     </div>
   )
 }
@@ -3997,7 +3989,7 @@ export default function StudentDashboard({
   }
 
   return (
-    <div className="student-app">
+    <div className="student-app" onClickCapture={(event) => guardProfileInteraction(event, studentProfile, () => { setSelectedProject(null); setActiveTab('profile') })} onSubmitCapture={(event) => guardProfileInteraction(event, studentProfile, () => { setSelectedProject(null); setActiveTab('profile') })}>
       <Sidebar
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -4021,12 +4013,14 @@ export default function StudentDashboard({
         )}
 
         <main className="dashboard-content">
+          {missingProfileFields(studentProfile).length > 0 && <div className="application-notice" role="status">{activeTab === 'profile' ? 'You should complete your profile first before doing anything.' : 'Complete your profile before applying, publishing, messaging, or other interactions.'} Missing: {missingProfileFields(studentProfile).join(', ')}. {activeTab !== 'profile' && <button className="text-button" type="button" onClick={() => setActiveTab('profile')}>My profile</button>}</div>}
           {Object.entries(
             screens
           ).map(
             ([tabId, screen]) => (
               <div
                 key={tabId}
+                data-profile-edit={tabId === 'profile' ? true : undefined}
                 hidden={
                   activeTab !== tabId
                 }

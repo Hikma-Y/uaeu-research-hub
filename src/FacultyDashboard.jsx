@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import SupabaseMessages from './SupabaseMessages'
+import { missingProfileFields, guardProfileInteraction } from './lib/profileCompletion'
 import OrcidImport from './OrcidImport'
 import { applyOrcidSelection } from './lib/orcid'
 import { rankStudentsForProject } from './lib/matching'
@@ -2641,7 +2642,7 @@ export default function FacultyDashboard({
   }
 
   return (
-    <div className="student-app faculty-app">
+    <div className="student-app faculty-app" onClickCapture={(event) => guardProfileInteraction(event, facultyProfile, () => setActiveTab('profile'))} onSubmitCapture={(event) => guardProfileInteraction(event, facultyProfile, () => setActiveTab('profile'))}>
       <FacultySidebar
         activeTab={activeTab}
         onTabChange={
@@ -2660,12 +2661,14 @@ export default function FacultyDashboard({
         />
 
         <main className="dashboard-content">
+          {missingProfileFields(facultyProfile).length > 0 && <div className="application-notice" role="status">{activeTab === 'profile' ? 'You should complete your profile first before doing anything.' : 'Complete your profile before creating projects, adopting ideas, messaging, or other interactions.'} Missing: {missingProfileFields(facultyProfile).join(', ')}. {activeTab !== 'profile' && <button className="text-button" type="button" onClick={() => setActiveTab('profile')}>My profile</button>}</div>}
           {Object.entries(
             screens
           ).map(
             ([tabId, screen]) => (
               <div
                 key={tabId}
+                data-profile-edit={tabId === 'profile' ? true : undefined}
                 hidden={
                   activeTab !==
                   tabId

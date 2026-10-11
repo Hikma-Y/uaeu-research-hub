@@ -178,7 +178,91 @@ function PasswordUpdateForm({ onExit }) {
   )
 }
 
+function RegistrationForm({ onBack }) {
+  const [registrationEmail, setRegistrationEmail] = useState('')
+  const role = /^[0-9]/.test(registrationEmail.trim()) ? 'student' : /^[a-z]/i.test(registrationEmail.trim()) ? 'faculty' : null
+  const [consent, setConsent] = useState(false)
+  const [status, setStatus] = useState('idle')
+  const [message, setMessage] = useState('')
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    if (status === 'loading') return
+    if (!consent) {
+      setMessage('Please accept sharing your research background within UAEU Research Hub to create an account.')
+      return
+    }
+    const form = new FormData(event.currentTarget)
+    const identifier = String(form.get('identifier') || '').trim()
+    const email = identifier.toLowerCase()
+    const password = String(form.get('password') || '')
+    const fullName = String(form.get('full_name') || '').trim()
+    const universityId = String(form.get('university_id') || '').trim()
+    const validId = /^\d{9}$/.test(universityId) || (role === 'faculty' && !universityId)
+    if (!role || !fullName || !validId || !/^[a-z0-9][^\s@]*@uaeu\.ac\.ae$/i.test(email)) {
+      setMessage(role === 'faculty' ? 'Enter your name and UAEU email. University ID is optional; if provided, it must contain nine digits.' : 'Enter your name and full UAEU email starting with a digit or letter. Students also require a nine-digit university ID.')
+      return
+    }
+    if (password.length < 10 || password !== form.get('confirmation')) {
+      setMessage('Use a password of at least 10 characters and make sure both passwords match.')
+      return
+    }
+    setStatus('loading')
+    setMessage('')
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+          data: {
+            full_name: fullName,
+            university_id: universityId,
+            role,
+            research_background_consent: true,
+            research_background_consent_version: 'hub-only-v1',
+          },
+        },
+      })
+      if (error) throw error
+      if (Array.isArray(data?.user?.identities) && data.user.identities.length === 0) {
+        setStatus('idle')
+        setMessage('You already have an account. Please sign in.')
+        return
+      }
+      setStatus('complete')
+      setMessage('Your account has been created.')
+    } catch (error) {
+      setStatus('idle')
+      const alreadyRegistered = ['user_already_exists', 'email_exists'].includes(error.code)
+        || /already registered|already exists/i.test(error.message || '')
+      setMessage(alreadyRegistered ? 'You already have an account. Please sign in.' : error.message || 'Could not create your account. Please try again.')
+    }
+  }
+
+  return <section className="login-card" aria-labelledby="registration-title">
+    <div className="login-card__heading"><span className="eyebrow">UAEU Research Hub</span><h1 id="registration-title">Create an account</h1><p>Join as a student or faculty member.</p></div>
+    <form onSubmit={handleSubmit}>
+      <div className="field-group"><label htmlFor="registration-name">Full name</label><div className="input-wrap"><input id="registration-name" name="full_name" autoComplete="name" required /></div></div>
+      <div className="field-group"><label htmlFor="registration-email">UAEU email</label><div className="input-wrap"><Mail size={19} aria-hidden="true" /><input id="registration-email" name="identifier" type="email" autoComplete="username" value={registrationEmail} onChange={(event) => setRegistrationEmail(event.target.value)} placeholder="202312345@uaeu.ac.ae or name@uaeu.ac.ae" required /></div></div>
+      {role && <p className="auth-form-message" role="status">Account type: {role === 'student' ? 'Student' : 'Faculty'}</p>}
+      <div className="field-group"><label htmlFor="registration-id">University ID{role === 'faculty' ? ' (optional)' : ''}</label><div className="input-wrap"><input id="registration-id" name="university_id" inputMode="numeric" pattern="[0-9]{9}" maxLength={9} placeholder="Nine-digit university ID" required={role !== 'faculty'} /></div></div>
+      <div className="field-group"><label htmlFor="registration-password">Password</label><div className="input-wrap"><LockKeyhole size={19} aria-hidden="true" /><input id="registration-password" name="password" type="password" autoComplete="new-password" minLength={10} placeholder="At least 10 characters" required /></div></div>
+      <div className="field-group"><label htmlFor="registration-confirmation">Confirm password</label><div className="input-wrap"><input id="registration-confirmation" name="confirmation" type="password" autoComplete="new-password" minLength={10} required /></div></div>
+      <label className="checkbox-row"><input type="checkbox" name="research_background_consent" checked={consent} onChange={(event) => setConsent(event.target.checked)} required disabled={status !== 'idle'} /><span className="checkbox-ui" aria-hidden="true" /><span>I accept sharing my research background within UAEU Research Hub only, for research matching and collaboration.</span></label>
+      {message && <p className={status === 'complete' ? 'auth-form-message is-success' : 'auth-form-message'} role="status">{message}</p>}
+      {status === 'complete' ? (
+        <button className="primary-button" type="button" onClick={onBack}>Back to sign in</button>
+      ) : <>
+        <button className="primary-button registration-submit" type="submit" aria-busy={status === 'loading'} disabled={!consent || status === 'loading'}>{status === 'loading' ? 'Creating account...' : 'Create account'}</button>
+        <button className="auth-text-button" type="button" onClick={onBack} disabled={status === 'loading'}>Back to sign in</button>
+      </>}
+    </form>
+  </section>
+}
+
 function LoginForm() {
+  const [showRegistration, setShowRegistration] = useState(false)
   const [showPassword, setShowPassword] =
     useState(false)
 
@@ -235,6 +319,8 @@ function LoginForm() {
     setStatus('idle')
   }
 
+  if (showRegistration) return <RegistrationForm onBack={() => setShowRegistration(false)} />
+
   if (showResetRequest) {
     return (
       <PasswordResetRequest
@@ -262,6 +348,8 @@ function LoginForm() {
           access your research workspace.
         </p>
       </div>
+
+      <button className="auth-text-button" type="button" onClick={() => setShowRegistration(true)}>New student or faculty member? Create an account</button>
 
       <form onSubmit={handleSubmit}>
         <div className="field-group">

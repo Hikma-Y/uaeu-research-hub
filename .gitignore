@@ -12,3 +12,6 @@ backend/uploads/*
 # Never commit local environment files
 .env.local
 .env.production
+matching-service/.venv/
+__pycache__/
+*.pyc
