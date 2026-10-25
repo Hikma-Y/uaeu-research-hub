@@ -15,3 +15,4 @@ backend/uploads/*
 matching-service/.venv/
 __pycache__/
 *.pyc
+.vercel

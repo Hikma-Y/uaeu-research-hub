@@ -666,7 +666,7 @@ function Overview({ data, profile, onNavigate }) {
   )
 }
 
-function ProjectManagement({ data, onReload, logActivity }) {
+function ProjectManagement({ data, profile, onReload, logActivity }) {
   const programTypes = ['SURE+', 'SDG', 'District 4.0', 'Research Assistant', 'Other']
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('All')
@@ -677,12 +677,15 @@ function ProjectManagement({ data, onReload, logActivity }) {
   const [deletingProject, setDeletingProject] = useState(false)
   const [message, setMessage] = useState('')
   const [otherProgramType, setOtherProgramType] = useState('')
+  const [facultyOwnerId, setFacultyOwnerId] = useState('')
+  const [editingProject, setEditingProject] = useState(null)
   const [draft, setDraft] = useState({
     title: '', type: 'SURE+', department: 'Computer Science', supervisor: '', description: '',
     deadline: '', commitment: '', tags: '', requirements: '', status: 'Open',
   })
 
   const projects = data.projects
+  const facultyMembers = data.profiles.filter((person) => person.role === 'faculty')
   const applicationCounts = data.applications.reduce((accumulator, application) => {
     const key = String(application.opportunity_id)
     accumulator[key] = (accumulator[key] || 0) + 1
@@ -700,16 +703,49 @@ function ProjectManagement({ data, onReload, logActivity }) {
 
   const selected = projects.find((project) => String(project.id) === String(selectedId)) || visible[0]
 
-  async function createProject(event) {
+  function openProjectForm(project = null) {
+    if (saving) return
+    setEditingProject(project)
+    setMessage('')
+    setOtherProgramType(project && !programTypes.includes(project.type) ? project.type || '' : '')
+    setFacultyOwnerId(facultyMembers.some((person) => person.id === project?.owner_id) ? project.owner_id : '')
+    setDraft({
+      title: project?.title || '',
+      type: project ? (programTypes.includes(project.type) ? project.type : 'Other') : 'SURE+',
+      department: project?.department || 'Computer Science',
+      supervisor: project?.supervisor || '',
+      description: project?.description || '',
+      deadline: project?.deadline?.slice(0, 10) || '',
+      commitment: project?.commitment || '',
+      tags: profileListToText(project?.tags),
+      requirements: profileListToText(project?.requirements),
+      status: project?.status || 'Open',
+    })
+    setShowProjectDetails(false)
+    setShowForm(true)
+  }
+
+  async function saveProject(event) {
     event.preventDefault()
+    if (saving) return
+    if (!profile?.id) {
+      setMessage('Your account could not be loaded. Please sign in again before creating a project.')
+      return
+    }
+    const facultyOwner = facultyMembers.find((person) => person.id === facultyOwnerId)
+    if (facultyOwnerId && !facultyOwner) {
+      setMessage('Please select an available faculty account.')
+      return
+    }
     setSaving(true)
     setMessage('')
 
     const payload = {
+      owner_id: facultyOwner?.id || (editingProject && !facultyMembers.some((person) => person.id === editingProject.owner_id) ? editingProject.owner_id : null) || profile.id,
       title: draft.title.trim(),
       type: draft.type === 'Other' ? otherProgramType.trim() : draft.type,
       department: draft.department.trim(),
-      supervisor: draft.supervisor.trim(),
+      supervisor: facultyOwner ? (facultyOwner.full_name || facultyOwner.email) : draft.supervisor.trim(),
       description: draft.description.trim(),
       deadline: draft.deadline || null,
       commitment: draft.commitment.trim() || null,
@@ -718,11 +754,10 @@ function ProjectManagement({ data, onReload, logActivity }) {
       status: draft.status,
     }
 
-    const { data: created, error } = await supabase
-      .from('research_opportunities')
-      .insert(payload)
-      .select('*')
-      .single()
+    const query = editingProject
+      ? supabase.from('research_opportunities').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingProject.id)
+      : supabase.from('research_opportunities').insert(payload)
+    const { data: created, error } = await query.select('*').single()
 
     if (error) {
       console.error('Project create error:', error)
@@ -731,9 +766,12 @@ function ProjectManagement({ data, onReload, logActivity }) {
       return
     }
 
-    await logActivity('project_created', 'project', created?.id, `Created project “${payload.title}”.`)
+    await logActivity(editingProject ? 'project_updated' : 'project_created', 'project', created?.id, `${editingProject ? 'Updated' : 'Created'} project “${payload.title}”.`)
+    setSelectedId(created.id)
+    setEditingProject(null)
     setDraft({ title: '', type: 'SURE+', department: 'Computer Science', supervisor: '', description: '', deadline: '', commitment: '', tags: '', requirements: '', status: 'Open' })
     setOtherProgramType('')
+    setFacultyOwnerId('')
     setShowForm(false)
     setSaving(false)
     await onReload()
@@ -795,14 +833,15 @@ function ProjectManagement({ data, onReload, logActivity }) {
           title="Research projects"
           description="Create, review and manage opportunities across UAEU."
           action={(
-            <button className="primary-dashboard-button" type="button" onClick={() => setShowForm((current) => !current)}>
+            <button className="primary-dashboard-button" type="button" disabled={saving} onClick={() => showForm ? setShowForm(false) : openProjectForm()}>
               {showForm ? <><X size={15} /> Close form</> : <><Plus size={15} /> New project</>}
             </button>
           )}
         />
 
         {showForm && (
-          <form className="admin-project-form admin-inline-form" onSubmit={createProject}>
+          <form className="admin-project-form admin-inline-form" onSubmit={saveProject}>
+            <h3 className="admin-form-wide">{editingProject ? 'Edit project' : 'New project'}</h3>
             <label className="admin-form-wide">Project title<input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
             <label>Program type
               <select
@@ -821,14 +860,21 @@ function ProjectManagement({ data, onReload, logActivity }) {
               <label>Other program type<input required autoFocus value={otherProgramType} onChange={(event) => setOtherProgramType(event.target.value)} placeholder="Enter program type" /></label>
             )}
             <label>Department<input required value={draft.department} onChange={(event) => setDraft({ ...draft, department: event.target.value })} /></label>
-            <label>Supervisor<input required value={draft.supervisor} onChange={(event) => setDraft({ ...draft, supervisor: event.target.value })} /></label>
-            <label>Status<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}><option>Open</option><option>Draft</option><option>In Progress</option><option>Completed</option></select></label>
+            <label>Faculty owner
+              <select value={facultyOwnerId} onChange={(event) => setFacultyOwnerId(event.target.value)}>
+                <option value="">Admin managed / external supervisor</option>
+                {facultyMembers.map((person) => <option key={person.id} value={person.id}>{person.full_name || person.email}{person.full_name && person.email ? ` (${person.email})` : ''}</option>)}
+              </select>
+              <small>Select a faculty account to show this project on their projects page.</small>
+            </label>
+            {!facultyOwnerId && <label>Supervisor<input required value={draft.supervisor} onChange={(event) => setDraft({ ...draft, supervisor: event.target.value })} /></label>}
+            <label>Status<select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}>{[...new Set(['Open', 'Draft', 'In Progress', 'Completed', 'Archived', draft.status])].map((status) => <option key={status}>{status}</option>)}</select></label>
             <label>Deadline<input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} /></label>
             <label>Commitment<input placeholder="e.g. 8 hours/week" value={draft.commitment} onChange={(event) => setDraft({ ...draft, commitment: event.target.value })} /></label>
             <label className="admin-form-wide">Description<textarea required value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label>
             <label className="admin-form-wide">Skills / tags<input placeholder="Python, AI, Data Analysis" value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} /></label>
             <label className="admin-form-wide">Requirements<input placeholder="3.0 GPA, Python experience" value={draft.requirements} onChange={(event) => setDraft({ ...draft, requirements: event.target.value })} /></label>
-            <button className="primary-dashboard-button admin-form-submit" type="submit" disabled={saving}>{saving ? 'Creating...' : 'Create project'}</button>
+            <button className="primary-dashboard-button admin-form-submit" type="submit" disabled={saving}>{saving ? 'Saving...' : editingProject ? 'Save changes' : 'Create project'}</button>
           </form>
         )}
 
@@ -875,6 +921,7 @@ function ProjectManagement({ data, onReload, logActivity }) {
                 <div><dt>Applications</dt><dd>{applicationCounts[String(selected.id)] || 0}</dd></div>
               </dl>
               <footer className="admin-project-actions">
+                <button type="button" disabled={saving || deletingProject} onClick={() => openProjectForm(selected)}>Edit project</button>
                 <button type="button" onClick={() => updateProjectStatus(selected, 'Completed')}>Complete</button>
                 <button className="admin-danger-button" type="button" onClick={() => updateProjectStatus(selected, 'Archived')}>Archive</button>
                 <button className="admin-danger-button" type="button" onClick={() => deleteProject(selected)} disabled={deletingProject}>{deletingProject ? 'Deleting…' : 'Delete project'}</button>
@@ -1730,7 +1777,7 @@ export default function AdminDashboard({ profile, onSignOut }) {
 
   const screens = {
     overview: <Overview data={data} profile={profile} onNavigate={setActiveTab} />,
-    projects: <ProjectManagement data={data} onReload={loadAdminData} logActivity={logActivity} />,
+    projects: <ProjectManagement data={data} profile={profile} onReload={loadAdminData} logActivity={logActivity} />,
     users: <UserManagement data={data} onReload={loadAdminData} logActivity={logActivity} />,
     progress: <ProgressTracking data={data} onReload={loadAdminData} logActivity={logActivity} />,
     oversight: <ProjectOversight data={data} />,
