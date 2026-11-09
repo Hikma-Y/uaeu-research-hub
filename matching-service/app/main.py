@@ -23,43 +23,52 @@ TRAINED_MODEL_DIRECTORY = SERVICE_DIRECTORY / "models" / "uaeu-sbert-matcher"
 
 
 class ONNXSentenceTransformer:
-    """Lightweight Sentence-BERT encoder using ONNX Runtime without PyTorch.
+    """Ultra-lightweight Sentence-BERT encoder using ONNX Runtime and Rust tokenizers.
     
-    Uses ~120MB RAM instead of ~800MB, perfectly fitting within Render's free tier.
+    Bypasses PyTorch and Hugging Face Transformers entirely.
+    Uses ~120MB RAM, running stably on 512MB RAM instances without OOM.
     """
     def __init__(self, model_id: str = DEFAULT_MODEL):
-        from transformers import AutoTokenizer
+        from tokenizers import Tokenizer
         import onnxruntime as ort
         from huggingface_hub import hf_hub_download
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        # Use quantized AVX2 ONNX model (only ~23MB disk, ~120MB RAM)
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.enable_cpu_mem_arena = False
+
+        self.tokenizer = Tokenizer.from_pretrained(model_id)
+        self.tokenizer.enable_padding(pad_token="[PAD]")
+        self.tokenizer.enable_truncation(max_length=128)
+
         onnx_file = hf_hub_download(repo_id=model_id, filename="onnx/model_quint8_avx2.onnx")
-        self.session = ort.InferenceSession(onnx_file, providers=["CPUExecutionProvider"])
+        self.session = ort.InferenceSession(onnx_file, sess_options=opts, providers=["CPUExecutionProvider"])
 
     def encode(self, sentences: str | list[str], normalize_embeddings: bool = True, show_progress_bar: bool = False):
         single = isinstance(sentences, str)
-        if single:
-            sentences = [sentences]
-        if not sentences:
+        texts = [sentences] if single else sentences
+        if not texts:
             return np.empty((0, 384))
 
-        inputs = self.tokenizer(sentences, padding=True, truncation=True, return_tensors="np", max_length=256)
+        encodings = self.tokenizer.encode_batch(texts)
+        input_ids = np.array([e.ids for e in encodings], dtype=np.int64)
+        attention_mask = np.array([e.attention_mask for e in encodings], dtype=np.int64)
+        token_type_ids = np.array([e.type_ids for e in encodings], dtype=np.int64)
+
         onnx_inputs = {
-            "input_ids": inputs["input_ids"].astype(np.int64),
-            "attention_mask": inputs["attention_mask"].astype(np.int64),
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
         }
         for node in self.session.get_inputs():
             if node.name == "token_type_ids":
-                onnx_inputs["token_type_ids"] = inputs.get(
-                    "token_type_ids", np.zeros_like(inputs["input_ids"])
-                ).astype(np.int64)
+                onnx_inputs["token_type_ids"] = token_type_ids
 
         outputs = self.session.run(None, onnx_inputs)
         token_embeddings = outputs[0]
-        attention_mask = inputs["attention_mask"][:, :, None]
-        sum_embeddings = np.sum(token_embeddings * attention_mask, axis=1)
-        sum_mask = np.clip(attention_mask.sum(axis=1), a_min=1e-9, a_max=None)
+        mask = attention_mask[:, :, None]
+        sum_embeddings = np.sum(token_embeddings * mask, axis=1)
+        sum_mask = np.clip(mask.sum(axis=1), a_min=1e-9, a_max=None)
         pooled = sum_embeddings / sum_mask
 
         if normalize_embeddings:
@@ -67,6 +76,7 @@ class ONNXSentenceTransformer:
             pooled = pooled / np.clip(norms, a_min=1e-9, a_max=None)
 
         return pooled[0] if single else pooled
+
 
 
 class ProjectInput(BaseModel):
