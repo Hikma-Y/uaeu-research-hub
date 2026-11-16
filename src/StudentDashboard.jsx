@@ -1011,7 +1011,7 @@ function Profile({
    * Load the student's stored documents from
    * their private UUID folder.
    */
-  async function loadDocuments() {
+  async function loadDocuments(clearError = true) {
     if (!profile?.id) {
       setDocuments([])
       setDocumentsLoading(false)
@@ -1019,7 +1019,7 @@ function Profile({
     }
 
     setDocumentsLoading(true)
-    setDocumentError('')
+    if (clearError) setDocumentError('')
 
     const { data, error } =
       await supabase.storage
@@ -1393,7 +1393,7 @@ function Profile({
 
     setDocumentUploading(false)
 
-    await loadDocuments()
+    await loadDocuments(false)
   }
 
   /*

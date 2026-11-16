@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { supabase } from './lib/supabase'
+import { authStorage, supabase } from './lib/supabase'
 import {
   ArrowRight,
   Eye,
   EyeOff,
   FlaskConical,
-  HelpCircle,
   LockKeyhole,
   Mail,
   ShieldCheck,
@@ -46,7 +45,7 @@ function BrandMark() {
 }
 
 function normalizeUaeuEmail(value) {
-  const identifier = String(value || '').trim()
+  const identifier = String(value || '').trim().toLowerCase()
   return /^\d{9}$/.test(identifier)
     ? `${identifier}@uaeu.ac.ae`
     : identifier
@@ -231,7 +230,9 @@ function RegistrationForm({ onBack }) {
         return
       }
       setStatus('complete')
-      setMessage('Your account has been created.')
+      setMessage(data.session
+        ? 'Your account has been created. You are signed in.'
+        : 'Check your UAEU email for a confirmation link before signing in. If it has not arrived, check your junk or spam folder.')
     } catch (error) {
       setStatus('idle')
       const alreadyRegistered = ['user_already_exists', 'email_exists'].includes(error.code)
@@ -285,6 +286,8 @@ function LoginForm() {
     const password =
       formData.get('password')
 
+    authStorage.setRememberSession(formData.get('remember') === 'on')
+
     const { data, error } =
       await supabase.auth.signInWithPassword({
         email,
@@ -299,9 +302,12 @@ function LoginForm() {
 
       setStatus('idle')
 
-      alert(
-        'Invalid email or password.'
-      )
+      const message = error.code === 'email_not_confirmed'
+        ? 'Please confirm your email before signing in. Open the confirmation link sent to your UAEU email and check your junk or spam folder.'
+        : error.code === 'invalid_credentials'
+          ? 'The email and password do not match. Use the exact email you registered with. A nine-digit ID signs in as ID@uaeu.ac.ae. If needed, use Forgot password to reset it.'
+          : error.message || 'Could not sign in. Please try again.'
+      alert(message)
 
       return
     }
@@ -483,17 +489,6 @@ function LoginForm() {
         </div>
       </form>
 
-      <div className="login-card__footer">
-        <span>
-          Need help accessing your
-          account?
-        </span>
-
-        <a href="#support">
-          <HelpCircle size={16} />
-          Contact IT support
-        </a>
-      </div>
     </section>
   )
 }
@@ -849,24 +844,6 @@ export default function App() {
       <header className="topbar">
         <BrandMark />
 
-        <nav
-          aria-label="Utility navigation"
-        >
-          <a href="#accessibility">
-            Accessibility
-          </a>
-
-          <span
-            aria-hidden="true"
-          />
-
-          <button
-            type="button"
-            lang="ar"
-          >
-            العربية
-          </button>
-        </nav>
       </header>
 
       <div className="page-grid">
@@ -946,8 +923,7 @@ export default function App() {
           <LoginForm />
 
           <p className="copyright">
-            © 2026 UAEU Research Hub ·
-            Project 31
+            © 2026 UAEU Research Hub
           </p>
         </section>
       </div>

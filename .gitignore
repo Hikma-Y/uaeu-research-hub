@@ -16,3 +16,4 @@ matching-service/.venv/
 __pycache__/
 *.pyc
 .vercel
+supabase/.temp/

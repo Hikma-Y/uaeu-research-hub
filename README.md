@@ -16,8 +16,11 @@ The active React application keeps Supabase authentication and the Supabase-conn
 
 Run `supabase/migrations/20261010_self_registration_consent.sql` in Supabase SQL
 Editor before using **Create an account** on the sign-in page. Enable email
-sign-ups and email confirmation in Supabase Authentication settings, and add
-your frontend URL to the allowed redirect URLs. The form supports student and
+sign-ups and turn **Confirm email** off under Supabase Authentication >
+Sign In / Providers > Email, then save. Accounts should sign in immediately
+after registration without email confirmation. This is a hosted Supabase
+setting and cannot be disabled by the frontend. Add your frontend URL to the
+allowed redirect URLs. The form supports student and
 faculty accounts only, automatically assigns student accounts to emails starting with
 a digit and faculty accounts to emails starting with a letter. It requires a full
 UAEU email and a nine-digit university ID for students
@@ -90,3 +93,17 @@ node --test supabase/tests/private_project_invitations.test.mjs
 ---
 
 The original Login project README is preserved as `README.original.md`.
+
+## Admin registration and login persistence
+
+For administrator-created accounts, apply
+`supabase/migrations/20261116_admin_registration_authorizations.sql` before
+deploying `admin-create-user`. This replaces the older registration bypass:
+Supabase Auth inserts users before applying their app metadata, so the function
+now creates a short-lived server-only authorization for the exact user ID,
+email, and role. Public registration still requires consent. Do not reapply the
+older registration migrations afterward, since they replace the same triggers.
+
+The login checkbox selects persistent local storage when checked and tab session
+storage when unchecked. Existing persistent logins remain readable. Sign-out
+clears both locations. `npm test` includes the persistence regression tests.

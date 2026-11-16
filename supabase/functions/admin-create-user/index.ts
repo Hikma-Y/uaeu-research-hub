@@ -54,8 +54,10 @@ Deno.serve(async (req) => {
       throw new Error('Name, email and a password of at least 10 characters are required.')
     }
 
-    if (!/^\d{9}$/.test(universityId)) {
-      throw new Error('University ID must contain exactly 9 digits.')
+    if (!(role === 'faculty' && !universityId) && !/^\d{9}$/.test(universityId)) {
+      throw new Error(role === 'faculty'
+        ? 'University ID is optional for faculty; if provided, it must contain exactly 9 digits.'
+        : 'University ID must contain exactly 9 digits.')
     }
 
     if (!['student', 'faculty', 'admin'].includes(role)) {
@@ -65,20 +67,37 @@ Deno.serve(async (req) => {
     // Service-role client is used only inside this server-side Edge Function.
     const adminClient = createClient(supabaseUrl, serviceRoleKey)
 
+    // Auth applies app_metadata after INSERT, too late for registration triggers.
+    // Authorize this exact ID/email/role before calling Auth instead.
+    const userId = crypto.randomUUID()
+    const { error: authorizationError } = await adminClient
+      .from('hub_admin_registration_authorizations')
+      .insert({ user_id: userId, email, role })
+    if (authorizationError) throw authorizationError
+
     const { data: created, error: createError } = await adminClient.auth.admin.createUser({
+      id: userId,
       email,
       password,
       email_confirm: true,
-      user_metadata: { full_name: fullName },
+      // Only the server-side admin API can set app_metadata. Public signup
+      // metadata must never be used to bypass the consent requirement.
+      app_metadata: { hub_admin_created: true },
+      user_metadata: { full_name: fullName, university_id: universityId || null, role },
     })
 
+    // The profile trigger normally consumes this authorization. Also clean it
+    // up on failure so unsuccessful attempts leave no reusable authorization.
+    const { error: cleanupError } = await adminClient
+      .from('hub_admin_registration_authorizations').delete().eq('user_id', userId)
+    if (cleanupError) console.error('Admin registration authorization cleanup failed:', cleanupError.message)
     if (createError) throw createError
 
     const { error: profileError } = await adminClient
       .from('profiles')
       .upsert({
         id: created.user.id,
-        university_id: universityId,
+        university_id: universityId || null,
         full_name: fullName,
         email,
         role,

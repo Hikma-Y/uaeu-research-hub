@@ -119,7 +119,9 @@ function createManagedProfileDraft(person) {
     year_of_study: person?.year_of_study || '',
     gpa: person?.gpa ?? '',
     expected_graduation_year: person?.expected_graduation_year ?? '',
-    research_experience: person?.research_experience || '',
+    research_experience: person?.role === 'student'
+      ? person?.bio || person?.research_experience || ''
+      : person?.research_experience || '',
     research_interests: profileListToText(person?.research_interests),
     skills: profileListToText(person?.skills),
   }
@@ -1024,7 +1026,7 @@ function UserManagement({ data, onReload, logActivity }) {
     }
 
     const changes = {
-      university_id: profileDraft.university_id.trim(),
+      university_id: profileDraft.university_id.trim() || null,
       department: profileDraft.department.trim(),
       research_experience: profileDraft.research_experience.trim(),
       research_interests: textToProfileList(profileDraft.research_interests),
@@ -1034,6 +1036,7 @@ function UserManagement({ data, onReload, logActivity }) {
 
     if (selected.role === 'student') {
       Object.assign(changes, {
+        bio: profileDraft.research_experience.trim(),
         major: profileDraft.major.trim(),
         year_of_study: profileDraft.year_of_study.trim(),
         gpa,
@@ -1090,7 +1093,16 @@ function UserManagement({ data, onReload, logActivity }) {
 
     if (error || response?.error) {
       console.error('Create user error:', error || response?.error)
-      setMessage(response?.error || error?.message || 'Could not create the user.')
+      let detail = response?.error || error?.message || 'Could not create the user.'
+      if (error?.context && typeof error.context.clone === 'function') {
+        try {
+          const payload = await error.context.clone().json()
+          detail = payload.error || payload.message || detail
+        } catch {
+          // Keep the original error when the response is not JSON.
+        }
+      }
+      setMessage(detail)
       setCreating(false)
       return
     }
@@ -1138,15 +1150,15 @@ function UserManagement({ data, onReload, logActivity }) {
         {showCreate && (
           <form className="admin-user-create-form admin-inline-form" onSubmit={createUser}>
             <label>Full name<input required value={draft.full_name} onChange={(event) => setDraft({ ...draft, full_name: event.target.value })} /></label>
-            <label>University ID
+            <label>University ID{draft.role === 'faculty' ? ' (optional)' : ''}
               <input
-                required
+                required={draft.role !== 'faculty'}
                 type="text"
                 inputMode="numeric"
                 autoComplete="off"
                 maxLength={9}
                 pattern="[0-9]{9}"
-                placeholder="Enter 9-digit university ID"
+                placeholder={draft.role === 'faculty' ? 'Optional 9-digit university ID' : 'Enter 9-digit university ID'}
                 value={draft.university_id}
                 onChange={(event) => {
                   const universityId = event.target.value.replace(/\D/g, '').slice(0, 9)
