@@ -344,19 +344,38 @@ function matchingApiUrl() {
   return String(import.meta.env?.VITE_MATCHING_API_URL || '').replace(/\/$/, '')
 }
 
-async function requestService(path, body) {
-  const apiUrl = matchingApiUrl()
+export async function requestService(path, body, { apiUrl = matchingApiUrl(), fetcher = fetch, timeoutMs = 30000 } = {}) {
   if (!apiUrl) return null
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetcher(`${apiUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`Matching service returned ${response.status}`)
+    return await response.json()
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
-  const response = await fetch(`${apiUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-
-  if (!response.ok) throw new Error(`Matching service returned ${response.status}`)
-
-  return response.json()
+export function projectRankingScores(results, requiredIds, idField) {
+  if (!Array.isArray(results)) throw new Error('Matching service returned an invalid ranking.')
+  const scores = new Map()
+  for (const result of results) {
+    const id = String(result?.[idField] ?? '')
+    if (!id || scores.has(id) || typeof result.match_score !== 'number'
+      || !Number.isFinite(result.match_score) || result.match_score < 0 || result.match_score > 100
+      || typeof result.eligible !== 'boolean') {
+      throw new Error('Matching service returned invalid or duplicate scores.')
+    }
+    scores.set(id, result)
+  }
+  if (requiredIds.some((id) => !scores.has(String(id)))) throw new Error('Matching service omitted required scores.')
+  return scores
 }
 
 function serviceNotice(payload, fallbackNotice) {
@@ -407,7 +426,7 @@ export async function rankStudentsForProject(project, students) {
     if (!Array.isArray(payload?.results)) throw new Error('Matching service returned an invalid ranking.')
 
     requireProjectWeightsSupport(payload, [project])
-    const scores = new Map(payload.results.map((result) => [String(result.student_id), result]))
+    const scores = projectRankingScores(payload.results, students.map((student) => student.student_id || student.id), 'student_id')
     const ranked = students
       .map((student) => attachProjectResult(project, student, scores.get(String(student.student_id || student.id)), payload.engine))
       .sort((left, right) => sortProjectMatches(left, right))
@@ -464,7 +483,7 @@ export async function rankProjectsForStudent(student, projects) {
     if (!Array.isArray(payload?.results)) throw new Error('Matching service returned an invalid ranking.')
 
     requireProjectWeightsSupport(payload, projects)
-    const scores = new Map(payload.results.map((result) => [String(result.project_id), result]))
+    const scores = projectRankingScores(payload.results, projects.map((project) => project.id), 'project_id')
     const ranked = projects.map((project) => {
       const fallbackResult = localProjectStudentMatch(project, student)
       const result = scores.get(String(project.id))

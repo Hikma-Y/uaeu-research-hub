@@ -3,6 +3,7 @@
 This build uses the same matching logic in every relevant place:
 
 - Faculty project → suitable students before invitations
+- Faculty Applications → actual applicants ranked against their own project
 - Student profile → recommended public projects
 - Student profile → recommended faculty supervisors
 - Student research idea → suitable faculty supervisors
@@ -66,6 +67,12 @@ Faculty can configure **Matching priorities** while creating or editing a projec
 For example, a skills-focused project could use **30 / 45 / 5 / 5 / 15** in the order above. An exploratory project could put more emphasis on relevance and less on prior experience. These are prioritization choices, not validated predictions or automated acceptance decisions.
 
 The saved `matching_weights` apply consistently to **faculty → candidate students** and **student → project recommendations**, in both the semantic service and structured fallback. Supervisor/idea matching has no project context and remains unchanged. Zero excludes a factor from the score and positive match reasons, but **minimum GPA remains a separate hard eligibility rule** even at 0% GPA weight. Existing projects retain the original default weighting.
+
+### Faculty Applications ranking
+
+The Applications tab shows **best match first**, using each application's project settings and the same semantic/structured matcher as project invitations. Only actual applicants are sent for scoring. Cards display a match percentage, reasons, source, and rank within their project. Eligible scored applicants appear before ineligible applicants; unavailable matches appear last and are never represented as a fabricated 0% score. Submission time and review status do not determine match order.
+
+Use the Project and Status filters to focus a review, and **Refresh rankings** after student-profile edits. New applications and saved project-matching changes refresh the ranking automatically. Existing Accept/Reject actions and server-side eligibility checks are unchanged. This uses the existing owner-protected candidate RPC; no additional database migration is required. Semantic-service timeouts fall back to structured scoring; candidate-loading failures or missing candidate data are explicitly labelled unavailable.
 
 ### Deployment order
 

@@ -49,7 +49,58 @@
 .faculty-application-list .candidate-card > p { grid-column: 2; grid-row: 2 / 4; margin: 0; min-height: 0; overflow-wrap: anywhere; }
 .faculty-application-list .candidate-card footer { grid-column: 3; grid-row: 2; margin: 0; padding: 0; border: 0; justify-content: end; }
 .faculty-application-list .candidate-view-profile { grid-column: 3; grid-row: 3; margin: 0; justify-self: end; }
-.faculty-application-list .candidate-quick-actions { grid-column: 2 / -1; margin-top: 6px; justify-self: end; }
+.faculty-application-list .candidate-quick-actions { grid-column: 2 / -1; grid-row: 5; margin-top: 6px; justify-self: end; }
+
+.faculty-application-ranking-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.faculty-application-ranking-toolbar p {
+  flex: 1 1 360px;
+  margin: 0;
+  color: #807571;
+  font-size: 0.7rem;
+  line-height: 1.6;
+}
+
+.faculty-application-list .candidate-application-match {
+  grid-column: 2 / -1;
+  grid-row: 4;
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eee8e4;
+}
+
+.candidate-application-match strong {
+  color: #39725a;
+  font-size: 0.76rem;
+}
+
+.candidate-application-match p {
+  margin: 0;
+  color: #807571;
+  font-size: 0.67rem;
+  line-height: 1.5;
+}
+
+.candidate-application-match small {
+  color: #918581;
+  font-size: 0.62rem;
+}
+
+.candidate-application-match__ineligible {
+  color: #963e46;
+  font-size: 0.68rem;
+}
+
+ .candidate-application-match[data-unavailable="true"] strong { color: #807571; }
 
 .faculty-sidebar .student-sidebar__brand {
   color: #633238;
@@ -1012,7 +1063,8 @@
   .faculty-application-list .candidate-match { grid-column: 2; grid-row: 4; justify-self: start; }
   .faculty-application-list .candidate-card footer { grid-column: 2; grid-row: 5; justify-content: start; }
   .faculty-application-list .candidate-view-profile { grid-column: 2; grid-row: 6; justify-self: start; }
-  .faculty-application-list .candidate-quick-actions { grid-column: 2; grid-row: 7; justify-self: stretch; }
+  .faculty-application-list .candidate-application-match { grid-column: 2; grid-row: 7; }
+  .faculty-application-list .candidate-quick-actions { grid-column: 2; grid-row: 8; justify-self: stretch; }
   .faculty-profile-fields--academic { grid-template-columns: 1fr; }
   .faculty-idea-grid { grid-template-columns: 1fr; }
   .candidate-modal > header { grid-template-columns: auto 1fr; }

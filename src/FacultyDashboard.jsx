@@ -5,6 +5,7 @@ import { missingProfileFields, guardProfileInteraction } from './lib/profileComp
 import OrcidImport from './OrcidImport'
 import { applyOrcidSelection } from './lib/orcid'
 import { rankStudentsForProject } from './lib/matching'
+import { buildApplicationRankingKey, rankProjectApplications } from './lib/applicationMatching'
 import {
   DEFAULT_MATCHING_WEIGHTS,
   MATCHING_WEIGHT_FIELDS,
@@ -2039,6 +2040,17 @@ function CandidateCard({
         </button>
       )}
 
+      {application && typeof entry.matching_unavailable === 'boolean' && (
+        <div className="candidate-application-match" data-unavailable={entry.matching_unavailable}>
+          {entry.matching_unavailable ? <strong>Match unavailable</strong> : <>
+            <strong>#{entry.project_match_rank} for this project · {entry.match_score}% match</strong>
+            {!entry.is_eligible && <span className="candidate-application-match__ineligible">Not eligible{entry.eligibility_reason ? ` — ${entry.eligibility_reason}` : ''}</span>}
+            {entry.match_reasons?.length > 0 && <p>{entry.match_reasons.join(' · ')}</p>}
+            {entry.match_source && <small>{entry.match_source}</small>}
+          </>}
+        </div>
+      )}
+
       {isSubmitted && (
         <div className="candidate-quick-actions">
           <button
@@ -2084,6 +2096,9 @@ function StudentProfileDialog({ studentId, onClose }) {
 
 function FacultyApplications({
   applications,
+  projects,
+  projectsLoading,
+  projectsError,
   loading,
   error,
   reviewingApplicationIds,
@@ -2095,13 +2110,49 @@ function FacultyApplications({
   const [selectedStudentId, setSelectedStudentId] = useState(null)
   const [selectedProject, setSelectedProject] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('')
-  const projectNames = [...new Set(applications.map((application) => application.project_title).filter(Boolean))]
-    .sort((first, second) => first.localeCompare(second))
+  const [rankingState, setRankingState] = useState({ key: null, applications: [], notices: [], error: '' })
+  const [rankingLoading, setRankingLoading] = useState(false)
+  const [rankingRefreshKey, setRankingRefreshKey] = useState(0)
+  const rankingKey = buildApplicationRankingKey(applications, projects)
+  const rankingIsCurrent = rankingState.key === rankingKey
+  const projectOptions = [...new Map(applications.map((application) => [
+    String(application.opportunity_id),
+    { id: String(application.opportunity_id), title: application.project_title || 'Untitled project' },
+  ])).values()].sort((first, second) => first.title.localeCompare(second.title) || first.id.localeCompare(second.id))
+
+  useEffect(() => {
+    if (loading || projectsLoading || error || projectsError) return
+    let cancelled = false
+    setRankingLoading(true)
+    rankProjectApplications(applications, projects, {
+      loadCandidates: async (project) => {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 20000)
+        try {
+          const { data, error: candidateError } = await supabase.rpc('get_match_candidates_for_project', {
+            p_opportunity_id: String(project.id),
+          }).abortSignal(controller.signal)
+          if (candidateError) throw candidateError
+          return data || []
+        } finally {
+          clearTimeout(timer)
+        }
+      },
+    }).then((ranking) => {
+      if (!cancelled) setRankingState({ key: rankingKey, ...ranking, error: '' })
+    }).catch((rankingError) => {
+      console.error('Application matching error:', rankingError.message)
+      if (!cancelled) setRankingState({ key: rankingKey, applications: [], notices: [], error: 'Could not rank applications. Try Refresh rankings.' })
+    }).finally(() => {
+      if (!cancelled) setRankingLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [rankingKey, rankingRefreshKey, loading, projectsLoading, error, projectsError])
 
   const visible =
-    applications.filter(
+    (rankingIsCurrent ? rankingState.applications : []).filter(
       (application) =>
-        (!selectedProject || application.project_title === selectedProject) &&
+        (!selectedProject || String(application.opportunity_id) === selectedProject) &&
         (!selectedStatus || application.status === selectedStatus) &&
         `${application.student_name || ''} ${application.student_email || ''} ${application.project_title || ''}`
           .toLowerCase()
@@ -2118,64 +2169,73 @@ function FacultyApplications({
           title="Student applications"
           action={
             <span className="count-pill">
-              {visible.length}{' '}
+              {rankingIsCurrent ? visible.length : applications.length}{' '}
               applications
             </span>
           }
         />
 
         <div className="faculty-application-filters">
-        <label className="dashboard-search">
-          <Search size={18} />
+          <label className="dashboard-search">
+            <Search size={18} />
 
-          <input
-            value={query}
-            onChange={(event) =>
-              setQuery(
-                event.target.value
-              )
-            }
-            placeholder="Search students or projects"
-            aria-label="Search students or projects"
-          />
-        </label>
-        <label className="faculty-application-project-filter">
-          <span>Project</span>
-          <select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
-            <option value="">All projects</option>
-            {projectNames.map((name) => <option key={name} value={name}>{name}</option>)}
-          </select>
-        </label>
-        <label className="faculty-application-project-filter faculty-application-status-filter">
-          <span>Status</span>
-          <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
-            <option value="">All statuses</option>
-            <option value="Submitted">Pending</option>
-            <option value="Accepted">Accepted</option>
-            <option value="Rejected">Rejected</option>
-          </select>
-        </label>
+            <input
+              value={query}
+              onChange={(event) =>
+                setQuery(
+                  event.target.value
+                )
+              }
+              placeholder="Search students or projects"
+              aria-label="Search students or projects"
+            />
+          </label>
+          <label className="faculty-application-project-filter">
+            <span>Project</span>
+            <select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
+              <option value="">All projects</option>
+              {projectOptions.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
+            </select>
+          </label>
+          <label className="faculty-application-project-filter faculty-application-status-filter">
+            <span>Status</span>
+            <select value={selectedStatus} onChange={(event) => setSelectedStatus(event.target.value)}>
+              <option value="">All statuses</option>
+              <option value="Submitted">Pending</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+          </label>
         </div>
+
+        <div className="faculty-application-ranking-toolbar">
+          <p>Best match first. Each applicant is scored against the project they applied to, using its saved matching priorities. Eligible applicants appear first; application time does not determine the ranking.</p>
+          <button className="text-button" type="button" disabled={loading || projectsLoading || rankingLoading} onClick={() => setRankingRefreshKey((current) => current + 1)}>
+            {rankingLoading ? 'Updating rankings…' : 'Refresh rankings'}
+          </button>
+        </div>
+        {rankingIsCurrent && rankingState.notices.map((notice) => <p className="faculty-ranking-note" key={notice} role="status">{notice}</p>)}
 
         {reviewNotice && (
           <p
-            className={`faculty-project-form__feedback ${
-              reviewNotice.type === 'error' ? 'is-error' : 'is-success'
-            }`}
+            className={`faculty-project-form__feedback ${reviewNotice.type === 'error' ? 'is-error' : 'is-success'
+              }`}
             role={reviewNotice.type === 'error' ? 'alert' : 'status'}
           >
             {reviewNotice.message}
           </p>
         )}
 
-        {loading ? (
-          <p>Loading student applications...</p>
-        ) : error ? (
+        {loading || projectsLoading ? (
+          <p role="status">Loading student applications...</p>
+        ) : error || projectsError || (rankingIsCurrent && rankingState.error) ? (
           <p className="faculty-project-form__feedback is-error" role="alert">
-            {error}
+            {error || projectsError || rankingState.error}
           </p>
+        ) : !rankingIsCurrent ? (
+          <p role="status">Ranking applicants by project compatibility…</p>
         ) : (
-          <div className="faculty-application-list">
+          <div className="faculty-application-list" aria-busy={rankingLoading}>
             {visible.map(
               (application) => (
                 <CandidateCard
@@ -2190,7 +2250,7 @@ function FacultyApplications({
           </div>
         )}
 
-        {!loading && !error && !visible.length && (
+        {!loading && !projectsLoading && !error && !projectsError && rankingIsCurrent && !rankingState.error && !visible.length && (
           <div className="empty-state">
             <FileSearch
               size={30}
@@ -2666,6 +2726,9 @@ export default function FacultyDashboard({
     applications: (
       <FacultyApplications
         applications={facultyApplications}
+        projects={projects}
+        projectsLoading={projectsLoading}
+        projectsError={projectsError}
         loading={applicationsLoading}
         error={applicationsError}
         reviewingApplicationIds={reviewingApplicationIds}
