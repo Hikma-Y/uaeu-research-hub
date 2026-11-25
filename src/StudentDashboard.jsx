@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
+import SupabaseMessages from './SupabaseMessages'
+import { missingProfileFields, guardProfileInteraction } from './lib/profileCompletion'
+import {
+  rankFacultyForIdea,
+  rankFacultyForStudent,
+  rankProjectsForStudent,
+} from './lib/matching'
 import {
   Bell,
   CalendarDays,
@@ -16,6 +23,7 @@ import {
   LayoutDashboard,
   Lightbulb,
   LogOut,
+  Mail,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
@@ -81,6 +89,52 @@ function formatDeadline(dateValue) {
     month: 'long',
     day: 'numeric',
   })
+}
+
+// Keep Supabase's internal UUID private while giving every existing and new
+// project a short, consistent reference that is safe to show to students.
+function getProjectCode(projectOrId) {
+  const id = typeof projectOrId === 'object'
+    ? projectOrId?.id
+    : projectOrId
+  const value = String(id || '').trim()
+
+  if (!value) return 'Project'
+
+  return value.toUpperCase().startsWith('PRJ-')
+    ? value
+    : `PRJ-${value.slice(0, 8)}`
+}
+
+function getRemainingSlots(project) {
+  const remaining = Number(project?.remaining_slots)
+
+  if (Number.isFinite(remaining)) {
+    return Math.max(remaining, 0)
+  }
+
+  return Math.max(Number(project?.student_capacity) || 0, 0)
+}
+
+function getAvailabilityLabel(project) {
+  const remaining = getRemainingSlots(project)
+
+  if (remaining === 0) return 'Full'
+
+  return `${remaining} student${remaining === 1 ? '' : 's'} remaining`
+}
+
+function hasStudentPayment(project) {
+  return (
+    project?.student_payment_aed !== null &&
+    project?.student_payment_aed !== undefined
+  )
+}
+
+function formatStudentPayment(payment) {
+  return new Intl.NumberFormat('en-AE', {
+    maximumFractionDigits: 2,
+  }).format(Number(payment))
 }
 
 function formatBytes(bytes) {
@@ -170,9 +224,72 @@ function Sidebar({
   )
 }
 
+function StudentNotificationBell({ profile, onNavigate }) {
+  const [notifications, setNotifications] = useState([])
+  const [isOpen, setIsOpen] = useState(false)
+
+  useEffect(() => {
+    async function loadNotifications() {
+      if (!profile?.id) return
+
+      const { data: messages } = await supabase
+        .from('direct_messages')
+        .select('id, sender_id, body, attachment_name, created_at, project_invitation_id')
+        .eq('recipient_id', profile.id)
+        .is('read_at', null)
+        .order('created_at', { ascending: false })
+        .limit(6)
+
+      const senderIds = [...new Set((messages || []).map((message) => message.sender_id))]
+      const { data: senders } = senderIds.length
+        ? await supabase.from('message_directory').select('id, full_name').in('id', senderIds)
+        : { data: [] }
+      const names = new Map((senders || []).map((sender) => [sender.id, sender.full_name]))
+      setNotifications((messages || []).map((message) => ({
+        ...message,
+        sender_name: names.get(message.sender_id) || 'University user',
+      })))
+    }
+
+    loadNotifications()
+    const refreshId = window.setInterval(loadNotifications, 12000)
+    return () => window.clearInterval(refreshId)
+  }, [profile?.id])
+
+  return (
+    <div className="header-notifications">
+      <button className="header-icon-button" type="button" aria-label="Notifications" onClick={() => setIsOpen((current) => !current)}>
+        <Bell size={20} />
+        {notifications.length > 0 && <span className="notification-dot" />}
+      </button>
+      {isOpen && (
+        <div className="notification-menu" role="dialog" aria-label="Notifications">
+          <header><strong>Notifications</strong>{notifications.length > 0 && <span>{notifications.length} new</span>}</header>
+          {notifications.length ? notifications.map((notification) => (
+            <button key={notification.id} type="button" onClick={() => {
+              setIsOpen(false)
+              if (notification.project_invitation_id) {
+                supabase.rpc('mark_project_invitation_notification_read', { p_message_id: notification.id }).then(({ error }) => {
+                  if (!error) setNotifications((current) => current.filter((item) => item.id !== notification.id))
+                })
+              }
+              onNavigate(notification.project_invitation_id ? 'projects' : 'messages')
+            }}>
+              <span className="notification-menu__avatar">{getInitials(notification.sender_name)}</span>
+              <span><strong>{notification.sender_name}</strong><small>{notification.project_invitation_id ? 'Invitation' : 'Message'} · {notification.body || `Attachment: ${notification.attachment_name || 'file'}`}</small></span>
+              <time>{new Date(notification.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+            </button>
+          )) : <p>No new notifications.</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DashboardHeader({
   activeTab,
   profile,
+  onNavigate,
 }) {
   const current = NAV_ITEMS.find(
     (item) => item.id === activeTab
@@ -193,14 +310,7 @@ function DashboardHeader({
       </div>
 
       <div className="dashboard-header__actions">
-        <button
-          className="header-icon-button"
-          type="button"
-          aria-label="Notifications"
-        >
-          <Bell size={20} />
-          <span className="notification-dot" />
-        </button>
+        <StudentNotificationBell profile={profile} onNavigate={onNavigate} />
 
         <div className="student-identity">
           <span className="student-avatar">
@@ -246,16 +356,20 @@ function OpportunityCard({
   onView,
   onApply,
   isApplied,
+  isApplying,
 }) {
   const tags = Array.isArray(opportunity.tags)
     ? opportunity.tags
     : []
 
+  const isFull = getRemainingSlots(opportunity) === 0
+  const isEligible = opportunity.is_eligible !== false
+
   return (
-    <article className="opportunity-card">
+    <article className={`opportunity-card ${isEligible ? '' : 'opportunity-card--ineligible'}`}>
       <div className="opportunity-card__top">
         <span className="project-id">
-          {opportunity.id}
+          {getProjectCode(opportunity)}
         </span>
 
         {typeof opportunity.match === 'number' ? (
@@ -276,6 +390,25 @@ function OpportunityCard({
       <p>
         {opportunity.type} · {opportunity.department}
       </p>
+
+      <div className="opportunity-card__availability">
+        <span className={isFull ? 'is-full' : ''}>
+          <UsersRound size={15} />
+          {getAvailabilityLabel(opportunity)}
+        </span>
+
+        {hasStudentPayment(opportunity) && (
+          <span className="is-funded">
+            Student stipend: AED {formatStudentPayment(opportunity.student_payment_aed)}
+          </span>
+        )}
+
+        {opportunity.minimum_gpa !== null && opportunity.minimum_gpa !== undefined && (
+          <span className={isEligible ? 'is-gpa-rule' : 'is-ineligible'}>
+            Minimum GPA: {opportunity.minimum_gpa}
+          </span>
+        )}
+      </div>
 
       <div className="tag-list">
         {tags.map((tag) => (
@@ -303,7 +436,7 @@ function OpportunityCard({
           <button
             className="card-apply-button"
             type="button"
-            disabled={isApplied}
+            disabled={isApplied || isFull || isApplying || !isEligible}
             onClick={() => onApply(opportunity.id)}
           >
             {isApplied ? (
@@ -311,12 +444,30 @@ function OpportunityCard({
                 <Check size={14} />
                 Applied
               </>
+            ) : isFull ? (
+              'Full'
+            ) : !isEligible ? (
+              'Not eligible'
+            ) : isApplying ? (
+              'Applying…'
             ) : (
               'Apply'
             )}
           </button>
         </div>
       </div>
+
+      {!isEligible && (
+        <p className="matching-eligibility-note">
+          {opportunity.eligibility_reason || 'You do not meet this project’s minimum eligibility requirement.'}
+        </p>
+      )}
+
+      {isEligible && opportunity.match_reasons?.length > 0 && (
+        <p className="matching-reasons">
+          {opportunity.match_reasons.join(' · ')}
+        </p>
+      )}
     </article>
   )
 }
@@ -324,6 +475,7 @@ function OpportunityCard({
 function ProjectDetailsModal({
   project,
   isApplied,
+  isApplying,
   onApply,
   onClose,
 }) {
@@ -359,6 +511,9 @@ function ProjectDetailsModal({
     ? project.tags
     : []
 
+  const isFull = getRemainingSlots(project) === 0
+  const isEligible = project.is_eligible !== false
+
   return (
     <div
       className="modal-backdrop"
@@ -386,7 +541,7 @@ function ProjectDetailsModal({
         <div className="project-modal__heading">
           <div className="opportunity-card__top">
             <span className="project-id">
-              {project.id} · {project.type}
+              {getProjectCode(project)} · {project.type}
             </span>
 
             {typeof project.match === 'number' ? (
@@ -491,14 +646,46 @@ function ProjectDetailsModal({
 
               <span>
                 <small>
-                  Project format
+                  Student places
                 </small>
 
                 <strong>
-                  Collaborative team
+                  {getAvailabilityLabel(project)}
                 </strong>
               </span>
             </div>
+
+            {project.minimum_gpa !== null && project.minimum_gpa !== undefined && (
+              <div>
+                <GraduationCap size={18} />
+
+                <span>
+                  <small>
+                    Minimum GPA
+                  </small>
+
+                  <strong>
+                    {project.minimum_gpa}
+                  </strong>
+                </span>
+              </div>
+            )}
+
+            {hasStudentPayment(project) && (
+              <div>
+                <span className="project-facts__currency">AED</span>
+
+                <span>
+                  <small>
+                    Student stipend
+                  </small>
+
+                  <strong>
+                    AED {formatStudentPayment(project.student_payment_aed)}
+                  </strong>
+                </span>
+              </div>
+            )}
           </aside>
         </div>
 
@@ -514,7 +701,7 @@ function ProjectDetailsModal({
           <button
             className="primary-dashboard-button"
             type="button"
-            disabled={isApplied}
+            disabled={isApplied || isFull || isApplying || !isEligible}
             onClick={() => onApply(project.id)}
           >
             {isApplied ? (
@@ -522,11 +709,19 @@ function ProjectDetailsModal({
                 <Check size={16} />
                 Application submitted
               </>
+            ) : isFull ? (
+              'Project full'
+            ) : !isEligible ? (
+              'Not eligible'
+            ) : isApplying ? (
+              'Submitting application…'
             ) : (
               'Apply for this project'
             )}
           </button>
         </footer>
+        {!isEligible && <p className="project-modal__eligibility" role="status">{project.eligibility_reason || 'You do not meet this project’s minimum eligibility requirement.'}</p>}
+        {isEligible && project.match_reasons?.length > 0 && <p className="project-modal__eligibility">Why it matches: {project.match_reasons.join(' · ')}</p>}
       </section>
     </div>
   )
@@ -557,7 +752,10 @@ function Overview({
   onViewProject,
   onApply,
   appliedProjectIds,
+  applyingProjectIds,
   applicationCount,
+  projectCount,
+  onNavigate,
 }) {
   const firstName = getFirstName(
     profile?.full_name
@@ -589,7 +787,7 @@ function Overview({
       </section>
 
       <div className="metric-grid">
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('opportunities')}>
           <span className="metric-icon metric-icon--gold">
             <Sparkles />
           </span>
@@ -607,9 +805,9 @@ function Overview({
           <small>
             Loaded from the research database
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('applications')}>
           <span className="metric-icon metric-icon--blue">
             <ClipboardList />
           </span>
@@ -627,22 +825,22 @@ function Overview({
           <small>
             Track every submission
           </small>
-        </article>
+        </button>
 
-        <article>
+        <button className="metric-card-button" type="button" onClick={() => onNavigate('projects')}>
           <span className="metric-icon metric-icon--green">
             <FolderKanban />
           </span>
 
           <div>
-            <strong>1</strong>
-            <span>Active project</span>
+            <strong>{projectCount}</strong>
+            <span>Active projects</span>
           </div>
 
           <small>
-            Project tracking demo
+            Track your research progress
           </small>
-        </article>
+        </button>
       </div>
 
       <section className="content-card">
@@ -664,6 +862,7 @@ function Overview({
                   isApplied={appliedProjectIds.includes(
                     item.id
                   )}
+                  isApplying={applyingProjectIds.includes(item.id)}
                 />
               ))}
           </div>
@@ -731,10 +930,10 @@ function Profile({
   const createDraft = (
     sourceProfile
   ) => ({
-    full_name: sourceProfile?.full_name || '',
     headline: sourceProfile?.headline || '',
     bio: sourceProfile?.bio || '',
     major: sourceProfile?.major || '',
+    department: sourceProfile?.department || '',
     year_of_study: sourceProfile?.year_of_study || '',
     gpa: sourceProfile?.gpa ?? '',
     expected_graduation_year:
@@ -812,7 +1011,7 @@ function Profile({
    * Load the student's stored documents from
    * their private UUID folder.
    */
-  async function loadDocuments() {
+  async function loadDocuments(clearError = true) {
     if (!profile?.id) {
       setDocuments([])
       setDocumentsLoading(false)
@@ -820,7 +1019,7 @@ function Profile({
     }
 
     setDocumentsLoading(true)
-    setDocumentError('')
+    if (clearError) setDocumentError('')
 
     const { data, error } =
       await supabase.storage
@@ -985,12 +1184,6 @@ function Profile({
     setSaveError('')
     setSaveSuccess(false)
 
-    if (!draft.full_name.trim()) {
-      setSaveError('Student name is required.')
-      setIsSaving(false)
-      return
-    }
-
     const gpa = draft.gpa === '' ? null : Number(draft.gpa)
     const graduationYear =
       draft.expected_graduation_year === ''
@@ -1045,10 +1238,10 @@ function Profile({
     }
 
     const updates = {
-      full_name: draft.full_name.trim(),
       headline: draft.headline.trim(),
       bio: draft.bio.trim(),
       major: draft.major.trim(),
+      department: draft.department.trim(),
       year_of_study: draft.year_of_study.trim(),
       gpa,
       expected_graduation_year: graduationYear,
@@ -1200,7 +1393,7 @@ function Profile({
 
     setDocumentUploading(false)
 
-    await loadDocuments()
+    await loadDocuments(false)
   }
 
   /*
@@ -1342,24 +1535,7 @@ function Profile({
     profile?.full_name
   )
 
-  const completionChecks = [
-    profile?.headline,
-    profile?.major,
-    profile?.year_of_study,
-    profile?.bio,
-    profile?.has_research_experience
-      ? profile?.experience_entries?.length
-      : true,
-    profile?.skills?.length,
-    profile?.research_interests?.length,
-    profile?.student_projects?.length,
-    profile?.linkedin_url || profile?.github_url,
-    documents.length,
-  ]
-  const completion = Math.round(
-    (completionChecks.filter(Boolean).length /
-      completionChecks.length) * 100
-  )
+  const completion = Math.round(((7 - missingProfileFields(profile).length) / 7) * 100)
 
   return (
     <div className="dashboard-section profile-page-layout">
@@ -1427,19 +1603,7 @@ function Profile({
           </span>
 
           <div>
-            {isEditing ? (
-              <label className="profile-name-field">
-                Student name
-                <input
-                  value={draft.full_name}
-                  onChange={(event) =>
-                    setDraft({ ...draft, full_name: event.target.value })
-                  }
-                />
-              </label>
-            ) : (
-              <h3>{profile?.full_name || 'Student'}</h3>
-            )}
+            <h3>{profile?.full_name || 'Student'}</h3>
 
             <p className="profile-headline">
               {profile?.headline ||
@@ -1536,7 +1700,11 @@ function Profile({
           <label>
             Department
 
-            <input value={profile?.department || ''} readOnly />
+            <input
+              value={isEditing ? draft.department : profile?.department || ''}
+              readOnly={!isEditing}
+              onChange={(event) => setDraft({ ...draft, department: event.target.value })}
+            />
           </label>
         </div>
 
@@ -2182,9 +2350,11 @@ function Profile({
 
 function Opportunities({
   opportunities,
+  matchingNotice,
   onViewProject,
   onApply,
   appliedProjectIds,
+  applyingProjectIds,
 }) {
   const [query, setQuery] =
     useState('')
@@ -2300,6 +2470,13 @@ function Opportunities({
           </select>
         </div>
 
+        {matchingNotice && (
+          <p className="opportunity-matching-note" role="status">
+            <Sparkles size={14} />
+            {matchingNotice}
+          </p>
+        )}
+
         <div className="opportunity-grid">
           {visible.map((item) => (
             <div
@@ -2319,6 +2496,7 @@ function Opportunities({
                 isApplied={appliedProjectIds.includes(
                   item.id
                 )}
+                isApplying={applyingProjectIds.includes(item.id)}
               />
             </div>
           ))}
@@ -2343,10 +2521,196 @@ function Opportunities({
   )
 }
 
+function FindFaculty({ profile, idea, onContact, invitationRefreshKey, profileRequest }) {
+  const [faculty, setFaculty] = useState([])
+  const [rankedFaculty, setRankedFaculty] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [rankingLoading, setRankingLoading] = useState(false)
+  const [rankingNotice, setRankingNotice] = useState('')
+  const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [department, setDepartment] = useState('')
+  const [interest, setInterest] = useState('')
+  const [selected, setSelected] = useState(null)
+  const [invitedFacultyIds, setInvitedFacultyIds] = useState([])
+  const [invitationStatusError, setInvitationStatusError] = useState('')
+  const [invitationsLoading, setInvitationsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!profileRequest || loading) return
+    const person = faculty.find((item) => item.id === profileRequest.id)
+    if (person) setSelected(person)
+    else setError('This faculty profile could not be loaded. Please try again later.')
+  }, [profileRequest, faculty, loading])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const { data, error: loadError } = await supabase.rpc('get_faculty_directory')
+      if (cancelled) return
+      if (loadError) setError('Faculty profiles could not be loaded. Please try again later.')
+      else setFaculty(data || [])
+      setLoading(false)
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!profile?.id || !idea?.id) {
+      setInvitedFacultyIds([])
+      setInvitationStatusError('')
+      setInvitationsLoading(false)
+      return undefined
+    }
+
+    let cancelled = false
+    async function loadInvitations() {
+      setInvitationsLoading(true)
+      const { data, error: invitationError } = await supabase
+        .from('direct_messages')
+        .select('recipient_id')
+        .eq('sender_id', profile.id)
+        .eq('research_idea_id', idea.id)
+
+      if (cancelled) return
+      if (invitationError) {
+        console.error('Faculty invitation status load error:', invitationError.message)
+        setInvitationStatusError('Previously sent invitations could not be loaded.')
+        setInvitedFacultyIds([])
+        setInvitationsLoading(false)
+        return
+      }
+
+      setInvitationStatusError('')
+      setInvitedFacultyIds([...new Set((data || []).map((invite) => String(invite.recipient_id)))])
+      setInvitationsLoading(false)
+    }
+
+    loadInvitations()
+    return () => { cancelled = true }
+  }, [profile?.id, idea?.id, invitationRefreshKey])
+
+  const hasMatchingProfile = Boolean(
+    profile?.major ||
+    profile?.department ||
+    profile?.research_experience ||
+    profile?.bio ||
+    profile?.has_research_experience ||
+    profile?.experience_entries?.length ||
+    profile?.skills?.length ||
+    profile?.research_interests?.length ||
+    profile?.relevant_coursework?.length
+  )
+  const profileKey = [
+    profile?.id,
+    profile?.major,
+    profile?.department,
+    profile?.research_experience,
+    profile?.bio,
+    profile?.has_research_experience,
+    (profile?.skills || []).join('|'),
+    (profile?.research_interests || []).join('|'),
+    (profile?.relevant_coursework || []).join('|'),
+    (profile?.research_tools || []).join('|'),
+    JSON.stringify(profile?.experience_entries || []),
+  ].join('::')
+  const ideaKey = [idea?.id, idea?.title, idea?.category, idea?.description].join('::')
+
+  useEffect(() => {
+    if (!faculty.length) {
+      setRankedFaculty([])
+      setRankingLoading(false)
+      return undefined
+    }
+
+    let cancelled = false
+    setRankingLoading(true)
+    const delay = idea ? 250 : 0
+    const timer = window.setTimeout(() => {
+      async function rank() {
+        const ranking = idea
+          ? await rankFacultyForIdea(idea, faculty)
+          : hasMatchingProfile
+            ? await rankFacultyForStudent(profile, faculty)
+            : {
+                faculty: [...faculty].sort((left, right) =>
+                  String(left.full_name || '').localeCompare(String(right.full_name || ''))
+                ),
+                notice: 'Add research interests, skills, or academic details to receive personalised faculty recommendations.',
+              }
+        if (cancelled) return
+        setRankedFaculty(ranking.faculty || [])
+        setRankingNotice(ranking.notice || '')
+        setRankingLoading(false)
+      }
+      rank()
+    }, delay)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [faculty, profileKey, ideaKey])
+
+  useEffect(() => {
+    if (!selected) return
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setSelected(null) }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [selected])
+
+  const departments = [...new Set(faculty.map((person) => person.department).filter(Boolean))].sort()
+  const interests = [...new Set(faculty.flatMap((person) => person.research_interests || []))].sort()
+  const rankedWithPosition = rankedFaculty.map((person, index) => ({ ...person, rank: index + 1 }))
+  const visible = rankedWithPosition.filter((person) =>
+    (!department || person.department === department) &&
+    (!interest || (person.research_interests || []).includes(interest)) &&
+    `${person.full_name || ''} ${person.department || ''} ${(person.research_interests || []).join(' ')} ${(person.skills || []).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())
+  )
+
+  return <section className="content-card">
+    <SectionHeading eyebrow="Idea Portal" title="Find faculty" action={<span className="count-pill">{faculty.length} faculty members</span>} />
+    <p className="faculty-directory-intro">Discover potential supervisors and explore their research interests.</p>
+    <p className="faculty-ranking-announcement">{idea ? `Recommendations for “${idea.title || 'Your draft idea'}” use semantic topic relevance, faculty expertise, and supervision availability.` : 'Faculty are ranked from your saved research profile. You can also choose one of your ideas for idea-specific recommendations.'}</p>
+    <div className="search-toolbar faculty-directory-toolbar">
+      <label className="dashboard-search"><Search size={19} /><input aria-label="Search faculty" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, research topic, or expertise" /></label>
+      <select aria-label="Faculty department" value={department} onChange={(event) => setDepartment(event.target.value)}><option value="">All departments</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
+      <select aria-label="Faculty research interest" value={interest} onChange={(event) => setInterest(event.target.value)}><option value="">All research interests</option>{interests.map((item) => <option key={item}>{item}</option>)}</select>
+    </div>
+    {loading ? <p role="status">Loading faculty profiles…</p> : error ? <p role="alert">{error}</p> : <>
+      {rankingNotice && <p className="opportunity-matching-note" role="status"><Sparkles size={14} />{rankingNotice}</p>}
+      {invitationStatusError && <p className="faculty-match-reason" role="alert">{invitationStatusError}</p>}
+      <p className="faculty-directory-intro" role="status">{rankingLoading ? 'Updating recommendations… ' : ''}{visible.length} faculty members · {idea ? 'Ranked by idea compatibility' : hasMatchingProfile ? 'Ranked by profile compatibility' : 'Listed alphabetically'}</p>
+      <div className="opportunity-grid">
+        {visible.map((person) => <article className="faculty-directory-card" key={person.id}>
+          {(idea || hasMatchingProfile) && <div className="faculty-match-heading"><span className="count-pill">#{person.rank}</span><strong>{person.is_available === false ? 'Not available' : `${person.match_score ?? 0}% match`}</strong></div>}
+          <div className="faculty-directory-identity"><span className="faculty-directory-avatar">{getInitials(person.full_name)}</span><div><h3>{person.full_name || 'Faculty member'}</h3><p>{person.department || 'Department not specified'}</p></div></div>
+          <h4>Research interests</h4>
+          <div className="tag-list">{person.research_interests?.length ? person.research_interests.map((item) => <span key={item}>{item}</span>) : <span>Not added yet</span>}</div>
+          {(idea || hasMatchingProfile) && <p className="faculty-match-reason">{person.match_reasons?.join(' · ') || 'No shared profile details have been added yet.'}</p>}
+          {person.is_available === false && <p className="faculty-match-reason">{person.availability_reason || 'This faculty member is not currently accepting new students.'}</p>}
+          <button className="text-button" type="button" onClick={() => setSelected(person)}>View Profile <ChevronRight size={15} /></button>
+          <button className="text-button" type="button" disabled={invitationsLoading || invitedFacultyIds.includes(String(person.id))} onClick={() => onContact(person, idea)}>
+            {invitedFacultyIds.includes(String(person.id)) ? <><Check size={15} /> Invitation sent</> : invitationsLoading ? 'Checking invitation…' : <><Mail size={15} /> {idea ? 'Invite to discuss idea' : 'Message faculty'}</>}
+          </button>
+        </article>)}
+        {!visible.length && <div className="empty-state"><UsersRound size={30} /><h3>{faculty.length ? 'No faculty match your search' : 'No faculty profiles available yet'}</h3><p>{faculty.length ? 'Try another keyword or change your filters.' : 'Faculty members will appear here as their profiles become available.'}</p></div>}
+      </div>
+    </>}
+    {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="project-modal" role="dialog" aria-modal="true" aria-labelledby="faculty-directory-title" onClick={(event) => event.stopPropagation()}>
+      <div className="project-modal__heading"><button className="faculty-directory-close" type="button" autoFocus aria-label="Close faculty profile" onClick={() => setSelected(null)}><X size={20} /></button><span>Faculty profile</span><h2 id="faculty-directory-title">{selected.full_name}</h2><p>{selected.department || 'Department not specified'}</p></div>
+      <div className="project-modal__body faculty-directory-details"><h3>Research biography</h3><p>{selected.research_experience || 'No biography added yet.'}</p><h3>Research interests</h3><div className="tag-list">{(selected.research_interests || []).map((item) => <span key={item}>{item}</span>)}{!selected.research_interests?.length && <p>Not added yet.</p>}</div><h3>Areas of expertise</h3><div className="tag-list">{(selected.skills || []).map((item) => <span key={item}>{item}</span>)}{!selected.skills?.length && <p>Not added yet.</p>}</div></div>
+    </section></div>}
+  </section>
+}
+
 function Applications({
   applications,
   opportunities,
   onViewProject,
+  onDelete,
+  deletingApplicationId,
   loading,
   error,
 }) {
@@ -2417,6 +2781,7 @@ function Applications({
               <span>Status</span>
               <span>Match</span>
               <span>Updated</span>
+              <span>Action</span>
             </div>
 
             {applications.map(
@@ -2490,6 +2855,20 @@ function Applications({
                           ).toLocaleDateString()
                         : '—'}
                     </span>
+
+                    <span data-label="Action">
+                      <button
+                        className="application-delete-button"
+                        type="button"
+                        disabled={deletingApplicationId === application.id}
+                        onClick={() => onDelete(application)}
+                      >
+                        <Trash2 size={14} />
+                        {deletingApplicationId === application.id
+                          ? 'Deleting...'
+                          : 'Delete'}
+                      </button>
+                    </span>
                   </div>
                 )
               }
@@ -2501,110 +2880,180 @@ function Applications({
   )
 }
 
-function Projects() {
-  const milestones = [
-    [
-      'Literature review',
-      'Completed',
-      'Apr 18',
-    ],
-    [
-      'Dataset preparation',
-      'Completed',
-      'Apr 25',
-    ],
-    [
-      'Model development',
-      'In progress',
-      'May 12',
-    ],
-    [
-      'Final evaluation',
-      'Upcoming',
-      'May 28',
-    ],
-  ]
+function ProjectInvitations({ profile, onRespond }) {
+  const [invitations, setInvitations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [rejectingId, setRejectingId] = useState(null)
+  const [response, setResponse] = useState('')
+  const [inquiringId, setInquiringId] = useState(null)
+  const [inquiry, setInquiry] = useState('')
+  const [respondingId, setRespondingId] = useState(null)
+  const [notice, setNotice] = useState('')
+
+  async function loadInvitations(silent = false) {
+    if (!silent) setLoading(true)
+    const { data, error: loadError } = await supabase.rpc('get_my_project_invitations')
+    if (loadError) {
+      console.error('Invitation load error:', loadError.message)
+      setError('Could not load your project invitations.')
+    } else {
+      setInvitations(data || [])
+      setError('')
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    loadInvitations()
+    const refreshId = window.setInterval(() => loadInvitations(true), 12000)
+    return () => window.clearInterval(refreshId)
+  }, [profile?.id])
+
+  async function respond(invitation, status) {
+    if (respondingId) return
+    setRespondingId(invitation.invitation_id)
+    setError('')
+    setNotice('')
+    const { error: updateError } = await supabase.rpc('respond_to_project_invitation', {
+      p_invitation_id: invitation.invitation_id,
+      p_status: status,
+      p_student_response: status === 'Rejected' ? response.trim() || null : null,
+    })
+    setRespondingId(null)
+
+    if (updateError) {
+      console.error('Invitation response error:', updateError.message)
+      setError(updateError.message || 'Could not update this invitation.')
+      return
+    }
+
+    setRejectingId(null)
+    setResponse('')
+    setNotice(status === 'Accepted' ? 'Invitation accepted. You have joined the project.' : 'Invitation declined.')
+    await loadInvitations()
+    await onRespond?.()
+  }
+
+  async function sendInquiry(invitation) {
+    const body = inquiry.trim()
+    if (!body || !profile?.id) return
+
+    const { error: sendError } = await supabase
+      .from('direct_messages')
+      .insert({
+        sender_id: profile.id,
+        recipient_id: invitation.faculty_id,
+        body: `Question about “${invitation.project_title}”: ${body}`,
+      })
+
+    if (sendError) {
+      console.error('Invitation inquiry error:', sendError.message)
+      setError('Could not send your inquiry. Make sure messaging is set up first.')
+      return
+    }
+
+    setInquiry('')
+    setInquiringId(null)
+  }
 
   return (
-    <div className="dashboard-section">
-      <section className="content-card project-banner">
-        <div>
-          <span className="project-id">
-            SURE+ 2026
-          </span>
-
-          <h2>
-            Sustainability Analytics Dashboard
-          </h2>
-
-          <p>
-            Supervisor: Dr. Khalid Al Nuaimi
-            · 72% complete
-          </p>
-        </div>
-
-        <div className="project-ring">
-          <strong>72%</strong>
-          <span>Progress</span>
-        </div>
-      </section>
-
-      <section className="content-card">
-        <SectionHeading
-          eyebrow="Project timeline"
-          title="Milestones"
-        />
-
-        <div className="milestone-list">
-          {milestones.map(
-            (
-              [name, status, date],
-              index
-            ) => (
-              <div
-                className="milestone"
-                key={name}
-              >
-                <span
-                  className={
-                    status ===
-                    'Completed'
-                      ? 'milestone__dot is-complete'
-                      : 'milestone__dot'
-                  }
-                >
-                  {status ===
-                  'Completed' ? (
-                    <Check size={14} />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-
-                <div>
-                  <strong>
-                    {name}
-                  </strong>
-
-                  <small>
-                    {status}
-                  </small>
+    <section className="content-card invitation-section">
+      <SectionHeading eyebrow="Private opportunities" title="Project invitations" />
+      {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
+      {loading ? <p>Loading invitations...</p> : !invitations.length ? (
+        <div className="empty-state"><Mail size={28} /><h3>No invitations yet</h3><p>Faculty invitations will appear here before a project is publicly posted.</p></div>
+      ) : (
+        <div className="invitation-list">
+          {invitations.map((invitation) => (
+            <article className="invitation-card" key={invitation.invitation_id}>
+              <div><span className="project-id">Private invitation</span><em className={`invitation-status invitation-status--${invitation.status.toLowerCase()}`}>{invitation.status}</em></div>
+              <h3>{invitation.project_title}</h3>
+              <p>{invitation.project_description}</p>
+              <small>From {invitation.faculty_name || 'Faculty member'}</small>
+              {invitation.status === 'Pending' && (
+                <div className="invitation-actions">
+                  <button className="primary-dashboard-button" type="button" disabled={Boolean(respondingId)} onClick={() => respond(invitation, 'Accepted')}>{respondingId === invitation.invitation_id ? 'Saving...' : 'Accept invitation'}</button>
+                  <button className="outline-button" type="button" onClick={() => { setRejectingId(invitation.invitation_id); setInquiringId(null) }}>Reject</button>
+                  <button className="text-button" type="button" onClick={() => { setInquiringId(invitation.invitation_id); setRejectingId(null) }}>Ask a question</button>
                 </div>
-
-                <time>
-                  <CalendarDays size={15} />
-                  {date}
-                </time>
-              </div>
-            )
-          )}
+              )}
+              {rejectingId === invitation.invitation_id && (
+                <div className="invitation-response"><textarea value={response} onChange={(event) => setResponse(event.target.value)} placeholder="Optional reason for declining" /><button className="outline-button" type="button" disabled={Boolean(respondingId)} onClick={() => respond(invitation, 'Rejected')}>Confirm rejection</button></div>
+              )}
+              {inquiringId === invitation.invitation_id && (
+                <div className="invitation-response"><textarea value={inquiry} onChange={(event) => setInquiry(event.target.value)} placeholder="Write your question for the faculty member" /><button className="primary-dashboard-button" type="button" onClick={() => sendInquiry(invitation)}>Send question</button></div>
+              )}
+              {invitation.status === 'Rejected' && invitation.student_response && <small className="invitation-note">Your reason: {invitation.student_response}</small>}
+            </article>
+          ))}
         </div>
-      </section>
-    </div>
+      )}
+    </section>
   )
 }
 
-function Ideas({ profile }) {
+function Projects({ profile, projects, loading, error, onViewProject, onInvitationRespond }) {
+  return <div className="dashboard-section">
+    <ProjectInvitations profile={profile} onRespond={onInvitationRespond} />
+    <section className="content-card">
+      <SectionHeading eyebrow="Project tracking" title="My projects" />
+      {loading ? <p role="status">Loading your projects...</p> : error ? <p role="alert">{error}</p> : projects.length ?
+        <div className="opportunity-grid">{projects.map((project) => <article className="content-card" key={project.id}>
+          <span className="project-id">{project.program_type || 'Research project'}</span>
+          <h3><button className="project-link" type="button" onClick={() => onViewProject(project)}>{project.title}</button></h3>
+          <p>{project.description || project.abstract || ''}</p>
+          <small>{getRemainingSlots(project)} student places remaining</small>
+          <button className="text-button" type="button" onClick={() => onViewProject(project)}>View details <ChevronRight size={15} /></button>
+        </article>)}</div> :
+        <div className="empty-state"><FolderKanban size={30} /><h3>No active projects yet</h3><p>Your projects will appear here once your applications are accepted.</p></div>}
+    </section>
+  </div>
+}
+
+function Ideas({ profile, onOpenConversation }) {
+  const recommendationsRef = useRef(null)
+  const [facultyProfileRequest, setFacultyProfileRequest] = useState(null)
+  const [recommendationIdea, setRecommendationIdea] = useState(null)
+  const [contact, setContact] = useState(null)
+  const [contactIdeaId, setContactIdeaId] = useState(null)
+  const [contactBody, setContactBody] = useState('')
+  const [contactError, setContactError] = useState('')
+  const [contactSending, setContactSending] = useState(false)
+  const [inviteRefreshKey, setInviteRefreshKey] = useState(0)
+
+  function startContact(person, idea) {
+    setContact(person)
+    setContactIdeaId(idea?.id || null)
+    setContactError('')
+    setContactBody(idea ? `Hello ${person.full_name || 'Doctor'},\n\nI would like to invite you to discuss my research idea: ${idea.title || 'Untitled idea'}.\n\n${idea.description || ''}\n\nWould you be interested in discussing this idea or supervising the research?` : '')
+  }
+
+  async function sendContact(event) {
+    event.preventDefault()
+    if (!profile?.id || !contact || !contactBody.trim() || contactSending) return
+    setContactSending(true)
+    setContactError('')
+    const { error } = await supabase.from('direct_messages').insert({
+      sender_id: profile.id,
+      recipient_id: contact.id,
+      body: contactBody.trim(),
+      research_idea_id: contactIdeaId,
+    })
+    setContactSending(false)
+    if (error) {
+      setContactError('Could not send your message. Please try again.')
+      return
+    }
+    if (contactIdeaId) setInviteRefreshKey((current) => current + 1)
+    setContact(null)
+    if (contactIdeaId) {
+      await loadIdeas()
+    } else {
+      onOpenConversation(contact.id)
+    }
+  }
   const [showForm, setShowForm] =
     useState(false)
 
@@ -2629,6 +3078,9 @@ function Ideas({ profile }) {
     setIsSubmitting,
   ] = useState(false)
 
+  const [deletingIdeaId, setDeletingIdeaId] = useState(null)
+  const [invitationStatusError, setInvitationStatusError] = useState('')
+
   const [
     draftIdea,
     setDraftIdea,
@@ -2636,19 +3088,21 @@ function Ideas({ profile }) {
     title: '',
     category:
       'Artificial Intelligence',
+    custom_category: '',
     description: '',
   })
 
   async function loadIdeas() {
     setIdeasLoading(true)
     setIdeasError('')
+    setInvitationStatusError('')
 
     const { data, error } =
       await supabase
         .from('research_ideas')
         .select(`
           *,
-          profiles (
+          profiles!research_ideas_student_id_fkey (
             full_name,
             major
           )
@@ -2671,7 +3125,63 @@ function Ideas({ profile }) {
       return
     }
 
-    setIdeas(data || [])
+    const { data: adopters } = await supabase
+      .from('adopted_idea_faculty')
+      .select('idea_id, faculty_name')
+    const facultyNames = (adopters || []).reduce((names, item) => ({ ...names, [String(item.idea_id)]: item.faculty_name }), {})
+
+    const { data: ideaInvitations, error: invitationError } = await supabase
+      .from('direct_messages')
+      .select('research_idea_id, recipient_id')
+      .eq('sender_id', profile?.id)
+      .not('research_idea_id', 'is', null)
+
+    let invitedFacultyByIdea = {}
+    if (invitationError) {
+      console.error('Research idea invitations load error:', invitationError.message)
+      setInvitationStatusError('Invitation status could not be loaded. Please try again later.')
+    } else {
+      setInvitationStatusError('')
+      const recipientsByIdea = new Map()
+      for (const invitation of ideaInvitations || []) {
+        const ideaId = String(invitation.research_idea_id)
+        const recipients = recipientsByIdea.get(ideaId) || new Set()
+        recipients.add(String(invitation.recipient_id))
+        recipientsByIdea.set(ideaId, recipients)
+      }
+
+      const recipientIds = [...new Set([...recipientsByIdea.values()].flatMap((ids) => [...ids]))]
+      let facultyNamesById = {}
+      if (recipientIds.length) {
+        const { data: directory, error: directoryError } = await supabase
+          .from('message_directory')
+          .select('id, full_name')
+          .in('id', recipientIds)
+
+        if (directoryError) {
+          console.error('Invited faculty names load error:', directoryError.message)
+          setInvitationStatusError('Invitation status is available, but faculty names could not be loaded.')
+        } else {
+          facultyNamesById = (directory || []).reduce((names, person) => ({
+            ...names,
+            [String(person.id)]: person.full_name || 'Faculty member',
+          }), {})
+        }
+      }
+
+      invitedFacultyByIdea = Object.fromEntries(
+        [...recipientsByIdea].map(([ideaId, recipients]) => [
+          ideaId,
+          [...recipients].map((id) => facultyNamesById[id] || 'Faculty member'),
+        ])
+      )
+    }
+
+    setIdeas((data || []).map((idea) => ({
+      ...idea,
+      adopter_name: facultyNames[String(idea.id)] || null,
+      invited_faculty: invitedFacultyByIdea[String(idea.id)] || [],
+    })))
     setIdeasLoading(false)
   }
 
@@ -2682,9 +3192,14 @@ function Ideas({ profile }) {
   async function submitIdea(event) {
     event.preventDefault()
 
+    const category = draftIdea.category === 'Other'
+      ? draftIdea.custom_category.trim()
+      : draftIdea.category
+
     if (
       !draftIdea.title.trim() ||
-      !draftIdea.description.trim()
+      !draftIdea.description.trim() ||
+      !category
     ) {
       return
     }
@@ -2709,7 +3224,7 @@ function Ideas({ profile }) {
             draftIdea.title.trim(),
 
           category:
-            draftIdea.category,
+            category,
 
           description:
             draftIdea.description.trim(),
@@ -2729,10 +3244,12 @@ function Ideas({ profile }) {
       return
     }
 
+    setRecommendationIdea({ title: draftIdea.title.trim(), description: draftIdea.description.trim(), category })
     setDraftIdea({
       title: '',
       category:
         'Artificial Intelligence',
+      custom_category: '',
       description: '',
     })
 
@@ -2745,6 +3262,31 @@ function Ideas({ profile }) {
     window.setTimeout(() => {
       setSubmitted(false)
     }, 2800)
+  }
+
+  async function deleteIdea(idea) {
+    if (
+      !profile?.id ||
+      idea.student_id !== profile.id
+    ) return
+
+    setDeletingIdeaId(idea.id)
+
+    const { error } = await supabase
+      .from('research_ideas')
+      .delete()
+      .eq('id', idea.id)
+      .eq('student_id', profile.id)
+
+    if (error) {
+      console.error('Research idea deletion error:', error.message)
+      alert('Could not delete your research idea.')
+      setDeletingIdeaId(null)
+      return
+    }
+
+    setIdeas((current) => current.filter((item) => item.id !== idea.id))
+    setDeletingIdeaId(null)
   }
 
   return (
@@ -2829,6 +3371,9 @@ function Ideas({ profile }) {
                     ...draftIdea,
                     category:
                       event.target.value,
+                    custom_category: event.target.value === 'Other'
+                      ? draftIdea.custom_category
+                      : '',
                   })
                 }
               >
@@ -2865,6 +3410,25 @@ function Ideas({ profile }) {
                 </option>
               </select>
             </label>
+
+            {draftIdea.category === 'Other' && (
+              <label>
+                Other research area
+
+                <input
+                  value={draftIdea.custom_category}
+                  onChange={(event) =>
+                    setDraftIdea({
+                      ...draftIdea,
+                      custom_category: event.target.value,
+                    })
+                  }
+                  placeholder="Enter the research area"
+                  required
+                  autoFocus
+                />
+              </label>
+            )}
 
             <label className="idea-form__description">
               Describe your idea
@@ -2914,6 +3478,15 @@ function Ideas({ profile }) {
         </section>
       )}
 
+      {contact && <div className="modal-backdrop" onClick={() => !contactSending && setContact(null)}><section className="project-modal" role="dialog" aria-modal="true" aria-labelledby="idea-contact-title" onClick={(event) => event.stopPropagation()}>
+        <div className="project-modal__heading"><h2 id="idea-contact-title">Message {contact.full_name}</h2></div>
+        <form className="idea-form project-modal__body" onSubmit={sendContact}>
+          <label className="idea-form__description">Invitation or message<textarea autoFocus value={contactBody} onChange={(event) => setContactBody(event.target.value)} required disabled={contactSending} /></label>
+          {contactError && <p role="alert">{contactError}</p>}
+          <div className="idea-form__actions"><button className="outline-button" type="button" disabled={contactSending} onClick={() => setContact(null)}>Cancel</button><button className="primary-dashboard-button" type="submit" disabled={contactSending || !contactBody.trim()}>{contactSending ? 'Sending...' : 'Send message'}</button></div>
+        </form>
+      </section></div>}
+
       <section className="content-card">
         <SectionHeading
           eyebrow="Community ideas"
@@ -2949,6 +3522,8 @@ function Ideas({ profile }) {
             </p>
           </div>
         ) : (
+          <>
+          {invitationStatusError && <p role="alert">{invitationStatusError}</p>}
           <div className="idea-grid">
             {ideas.map((idea) => (
               <article key={idea.id}>
@@ -2964,199 +3539,58 @@ function Ideas({ profile }) {
                   {idea.description}
                 </p>
 
-                <small>
-                  <UsersRound size={15} />
+                <div className="idea-card-footer">
+                  <small>
+                    <UsersRound size={15} />
+                    {idea.student_id && idea.student_id === profile?.id ? 'Submitted by me' : 'Submitted by Student'}
+                  </small>
 
-                  Submitted by{' '}
-                  {idea.profiles
-                    ?.full_name ||
-                    'Student'}
+                  {idea.adopter_name && (
+                    <small className="idea-adopted-by">Adopted by <button className="idea-faculty-profile-button" type="button" onClick={() => setFacultyProfileRequest({ id: idea.adopted_by })}>{idea.adopter_name}</button></small>
+                  )}
 
-                  {idea.profiles?.major
-                    ? ` · ${idea.profiles.major}`
-                    : ''}
-                </small>
+                  {idea.student_id === profile?.id && idea.invited_faculty?.length > 0 && (
+                    <small className="idea-invitation-status">Invitation sent to {idea.invited_faculty.join(', ')}</small>
+                  )}
+
+                  {idea.student_id && idea.student_id !== profile?.id && (
+                    <button
+                      className="text-button"
+                      type="button"
+                      aria-label={`Message the student who submitted ${idea.title}`}
+                      onClick={() => onOpenConversation(idea.student_id)}
+                    >
+                      <MessageSquare size={15} />
+                      Message
+                    </button>
+                  )}
+
+                  {idea.student_id === profile?.id && (
+                    <button className="text-button" type="button" onClick={() => { setRecommendationIdea(idea); setShowForm(false); window.requestAnimationFrame(() => recommendationsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })) }}>Find suitable faculty</button>
+                  )}
+                  {idea.student_id === profile?.id && (
+                    <button
+                      className="idea-delete-button"
+                      type="button"
+                      disabled={deletingIdeaId === idea.id}
+                      onClick={() => deleteIdea(idea)}
+                    >
+                      <Trash2 size={14} />
+                      {deletingIdeaId === idea.id ? 'Deleting...' : 'Delete'}
+                    </button>
+                  )}
+                </div>
               </article>
             ))}
           </div>
+          </>
         )}
       </section>
+      <div ref={recommendationsRef}><FindFaculty profile={profile} idea={showForm && (draftIdea.title.trim() || draftIdea.description.trim()) ? { ...draftIdea, category: draftIdea.category === 'Other' ? draftIdea.custom_category : draftIdea.category } : recommendationIdea} onContact={startContact} invitationRefreshKey={inviteRefreshKey} profileRequest={facultyProfileRequest} /></div>
     </div>
   )
 }
 
-/*
- * Messaging remains a frontend demo for now.
- * Socket.io will replace this later.
- */
-function Messages() {
-  const [message, setMessage] =
-    useState('')
-
-  const [sent, setSent] =
-    useState([])
-
-  function sendMessage(event) {
-    event.preventDefault()
-
-    if (!message.trim()) {
-      return
-    }
-
-    setSent((current) => [
-      ...current,
-      message,
-    ])
-
-    setMessage('')
-  }
-
-  return (
-    <div className="dashboard-section messaging-layout">
-      <aside className="content-card conversation-list">
-        <SectionHeading
-          eyebrow="Inbox"
-          title="Messages"
-        />
-
-        <label className="dashboard-search">
-          <Search size={18} />
-
-          <input
-            placeholder="Search conversations"
-          />
-        </label>
-
-        <button
-          className="conversation is-active"
-          type="button"
-        >
-          <span className="conversation-avatar">
-            SA
-          </span>
-
-          <span>
-            <strong>
-              Dr. Sara Al Mansoori
-            </strong>
-
-            <small>
-              Let's discuss your application…
-            </small>
-          </span>
-
-          <time>10:42</time>
-        </button>
-
-        <button
-          className="conversation"
-          type="button"
-        >
-          <span className="conversation-avatar">
-            KN
-          </span>
-
-          <span>
-            <strong>
-              Dr. Khalid Al Nuaimi
-            </strong>
-
-            <small>
-              Your milestone was approved.
-            </small>
-          </span>
-
-          <time>Mon</time>
-        </button>
-      </aside>
-
-      <section className="content-card chat-panel">
-        <header>
-          <span className="conversation-avatar">
-            SA
-          </span>
-
-          <div>
-            <strong>
-              Dr. Sara Al Mansoori
-            </strong>
-
-            <small>
-              <span className="online-dot" />
-              Online
-            </small>
-          </div>
-        </header>
-
-        <div className="chat-messages">
-          <div className="chat-date">
-            Today
-          </div>
-
-          <div className="message-bubble">
-            <p>
-              Your experience is a strong fit
-              for the AI matching project.
-              Are you available to discuss it tomorrow?
-            </p>
-
-            <time>10:38</time>
-          </div>
-
-          <div className="message-bubble message-bubble--me">
-            <p>
-              Yes, absolutely. I am available after 11:00 AM.
-            </p>
-
-            <time>10:41</time>
-          </div>
-
-          {sent.map(
-            (item, index) => (
-              <div
-                className="message-bubble message-bubble--me"
-                key={`${item}-${index}`}
-              >
-                <p>{item}</p>
-                <time>Now</time>
-              </div>
-            )
-          )}
-        </div>
-
-        <form
-          className="message-composer"
-          onSubmit={sendMessage}
-        >
-          <button
-            type="button"
-            aria-label="Attach file"
-          >
-            <Paperclip size={20} />
-          </button>
-
-          <input
-            value={message}
-            onChange={(event) =>
-              setMessage(
-                event.target.value
-              )
-            }
-            placeholder="Write a message…"
-          />
-
-          <button
-            className="send-button"
-            type="submit"
-            aria-label="Send message"
-          >
-            <Send size={18} />
-          </button>
-        </form>
-      </section>
-    </div>
-  )
-}
 
 export default function StudentDashboard({
   profile,
@@ -3166,6 +3600,8 @@ export default function StudentDashboard({
     studentProfile,
     setStudentProfile,
   ] = useState(profile)
+  const [messageContactId, setMessageContactId] = useState(null)
+  const [messageContactRequest, setMessageContactRequest] = useState(0)
 
   const [
     activeTab,
@@ -3192,6 +3628,8 @@ export default function StudentDashboard({
     setOpportunitiesError,
   ] = useState('')
 
+  const [matchingNotice, setMatchingNotice] = useState('')
+
   const [
     applications,
     setApplications,
@@ -3207,54 +3645,74 @@ export default function StudentDashboard({
     setApplicationsError,
   ] = useState('')
 
+  const [applyingProjectIds, setApplyingProjectIds] = useState([])
+
+  const [applicationNotice, setApplicationNotice] = useState(null)
+
+  const [deletingApplicationId, setDeletingApplicationId] = useState(null)
+
   useEffect(() => {
     setStudentProfile(profile)
   }, [profile])
 
-  useEffect(() => {
-    async function loadOpportunities() {
-      setOpportunitiesLoading(true)
-      setOpportunitiesError('')
+  const studentMatchingKey = [
+    studentProfile?.id,
+    studentProfile?.major,
+    studentProfile?.department,
+    studentProfile?.gpa,
+    studentProfile?.research_experience,
+    studentProfile?.bio,
+    studentProfile?.has_research_experience,
+    (studentProfile?.skills || []).join('|'),
+    (studentProfile?.research_interests || []).join('|'),
+    (studentProfile?.relevant_coursework || []).join('|'),
+    (studentProfile?.research_tools || []).join('|'),
+    JSON.stringify(studentProfile?.experience_entries || []),
+  ].join('::')
 
-      const { data, error } =
-        await supabase
-          .from(
-            'research_opportunities'
-          )
-          .select('*')
-          .order('created_at', {
-            ascending: false,
-          })
+  async function loadOpportunities(silent = false) {
+    if (!silent) setOpportunitiesLoading(true)
+    setOpportunitiesError('')
 
-      if (error) {
-        console.error(
-          'Opportunity load error:',
-          error.message
-        )
+    const { data, error } = await supabase
+      .from('student_research_opportunities')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-        setOpportunitiesError(
-          'Could not load research opportunities.'
-        )
-
-        setOpportunitiesLoading(false)
-        return
-      }
-
-      setOpportunities(data || [])
+    if (error) {
+      console.error('Opportunity load error:', error.message)
+      setOpportunitiesError('Could not load research opportunities.')
       setOpportunitiesLoading(false)
+      return null
     }
 
-    loadOpportunities()
-  }, [])
+    const publicOpportunities = data || []
+    let rankedOpportunities = publicOpportunities
+    if (studentProfile?.id) {
+      const ranking = await rankProjectsForStudent(studentProfile, publicOpportunities)
+      rankedOpportunities = ranking.projects
+      setOpportunities(rankedOpportunities)
+      setMatchingNotice(ranking.notice)
+    } else {
+      setOpportunities(publicOpportunities)
+      setMatchingNotice('')
+    }
+    setOpportunitiesLoading(false)
+    return rankedOpportunities
+  }
 
-  async function loadApplications() {
+  useEffect(() => {
+    if (studentProfile?.id) loadOpportunities()
+  }, [studentMatchingKey])
+
+  async function loadApplications(silent = false) {
     if (!studentProfile?.id) {
       setApplications([])
       setApplicationsLoading(false)
       return
     }
 
-    setApplicationsLoading(true)
+    if (!silent) setApplicationsLoading(true)
     setApplicationsError('')
 
     const { data, error } =
@@ -3290,8 +3748,13 @@ export default function StudentDashboard({
   useEffect(() => {
     if (studentProfile?.id) {
       loadApplications()
+      const refreshId = window.setInterval(() => {
+        loadApplications(true)
+        loadOpportunities(true)
+      }, 12000)
+      return () => window.clearInterval(refreshId)
     }
-  }, [studentProfile?.id])
+  }, [studentMatchingKey])
 
   const appliedProjectIds =
     applications.map(
@@ -3303,9 +3766,10 @@ export default function StudentDashboard({
     projectId
   ) {
     if (!studentProfile?.id) {
-      alert(
-        'Student profile could not be identified.'
-      )
+      setApplicationNotice({
+        type: 'error',
+        message: 'Student profile could not be identified.',
+      })
       return
     }
 
@@ -3314,37 +3778,100 @@ export default function StudentDashboard({
         projectId
       )
     ) {
+      setApplicationNotice({
+        type: 'error',
+        message: 'You have already applied to this project.',
+      })
       return
     }
 
-    const { error } =
-      await supabase
-        .from('applications')
-        .insert({
-          student_id:
-            studentProfile.id,
+    const project = opportunities.find((item) => item.id === projectId)
 
-          opportunity_id:
-            projectId,
+    if (!project || getRemainingSlots(project) === 0) {
+      setApplicationNotice({
+        type: 'error',
+        message: 'This project is full or is no longer available for applications.',
+      })
+      return
+    }
 
-          status:
-            'Submitted',
-        })
+    if (project.is_eligible === false) {
+      setApplicationNotice({
+        type: 'error',
+        message: project.eligibility_reason || 'You do not meet this project’s minimum eligibility requirement.',
+      })
+      return
+    }
+
+    if (applyingProjectIds.includes(projectId)) {
+      return
+    }
+
+    setApplicationNotice(null)
+    setApplyingProjectIds((current) => [...current, projectId])
+
+    const { error } = await supabase.rpc(
+      'apply_to_research_opportunity',
+      { p_opportunity_id: projectId }
+    )
+
+    setApplyingProjectIds((current) =>
+      current.filter((id) => id !== projectId)
+    )
 
     if (error) {
-      console.error(
-        'Application submission error:',
-        error.message
-      )
-
-      alert(
-        'Could not submit the application. Please try again.'
-      )
+      console.error('Application submission error:', error.message)
+      setApplicationNotice({
+        type: 'error',
+        message:
+          error.message ||
+          'Could not submit the application. Please try again.',
+      })
 
       return
     }
 
+    const refreshedOpportunities = await loadOpportunities()
     await loadApplications()
+    setSelectedProject((current) =>
+      current && refreshedOpportunities
+        ? refreshedOpportunities.find((item) => item.id === current.id) || current
+        : current
+    )
+    setApplicationNotice({
+      type: 'success',
+      message: 'Application submitted. Your place is now reserved for faculty review.',
+    })
+  }
+
+  async function deleteApplication(application) {
+    if (
+      !studentProfile?.id
+    ) return
+
+    setDeletingApplicationId(application.id)
+    setApplicationNotice(null)
+
+    const { error } = await supabase
+      .from('applications')
+      .delete()
+      .eq('id', application.id)
+      .eq('student_id', studentProfile.id)
+
+    if (error) {
+      console.error('Application deletion error:', error.message)
+      setApplicationNotice({
+        type: 'error',
+        message: 'Could not delete your application.',
+      })
+      setDeletingApplicationId(null)
+      return
+    }
+
+    setApplications((current) =>
+      current.filter((item) => item.id !== application.id)
+    )
+    setDeletingApplicationId(null)
   }
 
   if (opportunitiesLoading) {
@@ -3401,6 +3928,9 @@ export default function StudentDashboard({
     )
   }
 
+  const acceptedProjectIds = new Set(applications.filter((item) => item.status === 'Accepted').map((item) => String(item.opportunity_id)))
+  const studentProjects = opportunities.filter((item) => acceptedProjectIds.has(String(item.id)))
+
   const screens = {
     overview: (
       <Overview
@@ -3409,7 +3939,10 @@ export default function StudentDashboard({
         onViewProject={setSelectedProject}
         onApply={applyToProject}
         appliedProjectIds={appliedProjectIds}
+        applyingProjectIds={applyingProjectIds}
         applicationCount={applications.length}
+        projectCount={studentProjects.length}
+        onNavigate={setActiveTab}
       />
     ),
 
@@ -3423,9 +3956,11 @@ export default function StudentDashboard({
     opportunities: (
       <Opportunities
         opportunities={opportunities}
+        matchingNotice={matchingNotice}
         onViewProject={setSelectedProject}
         onApply={applyToProject}
         appliedProjectIds={appliedProjectIds}
+        applyingProjectIds={applyingProjectIds}
       />
     ),
 
@@ -3434,24 +3969,27 @@ export default function StudentDashboard({
         applications={applications}
         opportunities={opportunities}
         onViewProject={setSelectedProject}
+        onDelete={deleteApplication}
+        deletingApplicationId={deletingApplicationId}
         loading={applicationsLoading}
         error={applicationsError}
       />
     ),
 
-    projects: <Projects />,
+    projects: <Projects profile={studentProfile} projects={studentProjects} loading={applicationsLoading} error={applicationsError} onViewProject={setSelectedProject} onInvitationRespond={() => Promise.all([loadApplications(true), loadOpportunities(true)])} />,
 
     ideas: (
       <Ideas
         profile={studentProfile}
+        onOpenConversation={(id) => { setMessageContactId(id); setMessageContactRequest((current) => current + 1); setActiveTab('messages') }}
       />
     ),
 
-    messages: <Messages />,
+    messages: <SupabaseMessages key={messageContactRequest} profile={studentProfile} initialContactId={messageContactId} />,
   }
 
   return (
-    <div className="student-app">
+    <div className="student-app" onClickCapture={(event) => guardProfileInteraction(event, studentProfile, () => { setSelectedProject(null); setActiveTab('profile') })} onSubmitCapture={(event) => guardProfileInteraction(event, studentProfile, () => { setSelectedProject(null); setActiveTab('profile') })}>
       <Sidebar
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -3462,15 +4000,27 @@ export default function StudentDashboard({
         <DashboardHeader
           activeTab={activeTab}
           profile={studentProfile}
+          onNavigate={setActiveTab}
         />
 
+        {applicationNotice && (
+          <p
+            className={`application-notice application-notice--${applicationNotice.type}`}
+            role={applicationNotice.type === 'error' ? 'alert' : 'status'}
+          >
+            {applicationNotice.message}
+          </p>
+        )}
+
         <main className="dashboard-content">
+          {missingProfileFields(studentProfile).length > 0 && <div className="application-notice" role="status">{activeTab === 'profile' ? 'You should complete your profile first before doing anything.' : 'Complete your profile before applying, publishing, messaging, or other interactions.'} Missing: {missingProfileFields(studentProfile).join(', ')}. {activeTab !== 'profile' && <button className="text-button" type="button" onClick={() => setActiveTab('profile')}>My profile</button>}</div>}
           {Object.entries(
             screens
           ).map(
             ([tabId, screen]) => (
               <div
                 key={tabId}
+                data-profile-edit={tabId === 'profile' ? true : undefined}
                 hidden={
                   activeTab !== tabId
                 }
@@ -3489,6 +4039,11 @@ export default function StudentDashboard({
             ? appliedProjectIds.includes(
                 selectedProject.id
               )
+            : false
+        }
+        isApplying={
+          selectedProject
+            ? applyingProjectIds.includes(selectedProject.id)
             : false
         }
         onApply={applyToProject}
