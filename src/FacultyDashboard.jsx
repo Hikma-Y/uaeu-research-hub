@@ -6,6 +6,13 @@ import OrcidImport from './OrcidImport'
 import { applyOrcidSelection } from './lib/orcid'
 import { rankStudentsForProject } from './lib/matching'
 import {
+  DEFAULT_MATCHING_WEIGHTS,
+  MATCHING_WEIGHT_FIELDS,
+  describeProjectMatchingWeights,
+  getProjectMatchingWeights,
+  matchingWeightsError,
+} from './lib/matchingWeights'
+import {
   BarChart3,
   Bell,
   BriefcaseBusiness,
@@ -998,6 +1005,7 @@ function FacultyProjects({
     student_capacity: '1',
     student_payment_aed: '',
     minimum_gpa: '',
+    matching_weights: { ...DEFAULT_MATCHING_WEIGHTS },
   })
 
   const [isSaving, setIsSaving] = useState(false)
@@ -1014,6 +1022,8 @@ function FacultyProjects({
   const [groupChatNotice, setGroupChatNotice] = useState('')
   const [creatingGroupChat, setCreatingGroupChat] = useState(false)
 
+  const weightsError = matchingWeightsError(draft.matching_weights)
+  const weightsTotal = Object.values(draft.matching_weights).reduce((total, value) => total + (Number(value) || 0), 0)
   const normalizedRankingQuery = studentRankingQuery.trim().toLowerCase()
   const filteredRankedStudents = rankedStudents
     .map((student, index) => {
@@ -1045,6 +1055,7 @@ function FacultyProjects({
       student_capacity: '1',
       student_payment_aed: '',
       minimum_gpa: '',
+      matching_weights: { ...DEFAULT_MATCHING_WEIGHTS },
     }
   }
 
@@ -1084,6 +1095,7 @@ function FacultyProjects({
         project.minimum_gpa === undefined
           ? ''
           : String(project.minimum_gpa),
+      matching_weights: getProjectMatchingWeights(project),
     })
     setEditingProjectId(project.id)
     setFormError('')
@@ -1136,6 +1148,11 @@ function FacultyProjects({
       return
     }
 
+    if (weightsError) {
+      setFormError(weightsError)
+      return
+    }
+
     const projectPayload = {
       owner_id: profile.id,
       title: draft.title.trim(),
@@ -1150,6 +1167,7 @@ function FacultyProjects({
       student_capacity: studentCapacity,
       student_payment_aed: payment,
       minimum_gpa: minimumGpa,
+      matching_weights: { ...draft.matching_weights },
     }
 
     setIsSaving(true)
@@ -1172,7 +1190,9 @@ function FacultyProjects({
 
     if (saveError) {
       console.error('Project save error:', saveError.message)
-      setFormError(saveError.message || 'Could not save the project. Please try again.')
+      setFormError(saveError.message?.includes('matching_weights')
+        ? 'Project matching settings could not be saved. Confirm that the project matching weights database migration has been applied.'
+        : saveError.message || 'Could not save the project. Please try again.')
       return
     }
 
@@ -1490,6 +1510,40 @@ function FacultyProjects({
               />
             </label>
 
+            <fieldset className="faculty-project-form__wide faculty-matching-weights" aria-describedby="project-weights-help project-weights-total">
+              <legend>Matching priorities</legend>
+              <p id="project-weights-help">Choose how much each factor contributes to this project’s student rankings and student recommendations. Percentages must total 100%. A zero weight excludes a factor from the score, but does not remove the minimum GPA requirement.</p>
+              <div className="faculty-matching-weights__fields">
+                {MATCHING_WEIGHT_FIELDS.map(({ key, label, description }) => (
+                  <label key={key}>
+                    {label} (%)
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      required
+                      value={draft.matching_weights[key]}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        setDraft((current) => ({
+                          ...current,
+                          matching_weights: { ...current.matching_weights, [key]: value === '' ? '' : Number(value) },
+                        }))
+                      }}
+                    />
+                    <small>{description}</small>
+                  </label>
+                ))}
+              </div>
+              <div className="faculty-matching-weights__summary">
+                <p id="project-weights-total" role="status" className={weightsError ? 'is-invalid' : ''}>
+                  Total: {weightsTotal}% / 100%{weightsError ? ` — ${weightsError}` : ' — Ready to save'}
+                </p>
+                <button className="text-button" type="button" onClick={() => setDraft((current) => ({ ...current, matching_weights: { ...DEFAULT_MATCHING_WEIGHTS } }))}>Reset to defaults</button>
+              </div>
+            </fieldset>
+
             {formError && (
               <p className="faculty-project-form__feedback is-error" role="alert">
                 {formError}
@@ -1506,7 +1560,7 @@ function FacultyProjects({
               <button
                 className="primary-dashboard-button"
                 type="submit"
-                disabled={isSaving}
+                disabled={isSaving || Boolean(weightsError)}
               >
                 {isSaving
                   ? 'Saving…'
@@ -1526,6 +1580,7 @@ function FacultyProjects({
               title={`Students ranked by compatibility for ${rankingProject.title}`}
               action={<button className="text-button" type="button" onClick={() => setRankingProject(null)}>Close</button>}
             />
+            <p className="faculty-ranking-weights">{describeProjectMatchingWeights(rankingProject)}</p>
             <p className="faculty-ranking-note">{rankingNotice || 'This ranking combines research-topic relevance, skills, major fit, GPA, and experience. The score supports—not replaces—faculty judgement.'}</p>
             <label className="dashboard-search faculty-ranking-search">
               <Search size={18} aria-hidden="true" />

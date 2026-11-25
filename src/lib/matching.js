@@ -8,6 +8,8 @@
  * automatic accept/reject decision.
  */
 
+import { getProjectMatchingWeights, requireProjectWeightsSupport } from './matchingWeights.js'
+
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'by', 'for', 'from', 'in', 'into',
   'is', 'of', 'on', 'or', 'project', 'research', 'the', 'to', 'with',
@@ -126,8 +128,8 @@ function sameOrContains(left, right) {
   const rightValue = canonicalSkill(right)
   return Boolean(
     leftValue &&
-      rightValue &&
-      (leftValue === rightValue || leftValue.includes(rightValue) || rightValue.includes(leftValue))
+    rightValue &&
+    (leftValue === rightValue || leftValue.includes(rightValue) || rightValue.includes(leftValue))
   )
 }
 
@@ -255,24 +257,23 @@ function localProjectStudentMatch(project, student) {
     || Boolean(String(student?.research_experience || '').trim())
   const experienceScore = hasExperience ? 1 : 0
   const eligibility = getProjectEligibility(project, student)
-  const matchScore = Math.round(
-    100 * (
-      topicScore * 0.4 +
-      skillResult.score * 0.25 +
-      majorScore * 0.1 +
-      gpaScore * 0.1 +
-      experienceScore * 0.15
-    )
-  )
+  const weights = getProjectMatchingWeights(project)
+  const matchScore = Math.round(100 * (
+    topicScore * (weights.semantic / 100) +
+    skillResult.score * (weights.skills / 100) +
+    majorScore * (weights.academic / 100) +
+    gpaScore * (weights.gpa / 100) +
+    experienceScore * (weights.experience / 100)
+  ))
 
   const reasons = []
-  if (topicScore >= 0.25) reasons.push('Relevant research interests or coursework')
-  if (skillResult.matched.length) {
+  if (weights.semantic > 0 && topicScore >= 0.25) reasons.push('Relevant research interests or coursework')
+  if (weights.skills > 0 && skillResult.matched.length) {
     reasons.push(`${skillResult.matched.length}/${requiredSkills.length} required skills matched`)
   }
-  if (majorScore === 1) reasons.push('Major or department aligns')
-  if (gpaScore >= 0.75) reasons.push('Strong GPA profile')
-  if (hasExperience) reasons.push('Relevant experience or coursework listed')
+  if (weights.academic > 0 && majorScore === 1) reasons.push('Major or department aligns')
+  if (weights.gpa > 0 && gpaScore >= 0.75) reasons.push('Strong GPA profile')
+  if (weights.experience > 0 && hasExperience) reasons.push('Relevant experience or coursework listed')
   if (!eligibility.eligible) reasons.unshift(eligibility.reason)
 
   return {
@@ -322,6 +323,7 @@ function prepareProjectForService(project) {
     tags: toList(project?.tags),
     requirements: toList(project?.requirements),
     minimum_gpa: numeric(project?.minimum_gpa),
+    matching_weights: getProjectMatchingWeights(project),
   }
 }
 
@@ -369,8 +371,8 @@ function attachProjectResult(project, student, result, engine) {
   if (!result) return fallback
 
   const eligibility = getProjectEligibility(project, student)
-  const isEligible = typeof result.eligible === 'boolean' ? result.eligible : eligibility.eligible
-  const eligibilityReason = result.eligibility_reason || eligibility.reason || ''
+  const isEligible = eligibility.eligible && result.eligible !== false
+  const eligibilityReason = eligibility.reason || result.eligibility_reason || ''
   const reasons = Array.isArray(result.reasons) ? result.reasons.filter(Boolean) : fallback.match_reasons
 
   return {
@@ -404,6 +406,7 @@ export async function rankStudentsForProject(project, students) {
     })
     if (!Array.isArray(payload?.results)) throw new Error('Matching service returned an invalid ranking.')
 
+    requireProjectWeightsSupport(payload, [project])
     const scores = new Map(payload.results.map((result) => [String(result.student_id), result]))
     const ranked = students
       .map((student) => attachProjectResult(project, student, scores.get(String(student.student_id || student.id)), payload.engine))
@@ -418,7 +421,9 @@ export async function rankStudentsForProject(project, students) {
     console.warn('Semantic student matching is unavailable:', error.message)
     return {
       students: fallback(),
-      notice: 'The local semantic service is unavailable, so the transparent structured score is shown instead.',
+      notice: error.code === 'PROJECT_WEIGHTS_UNSUPPORTED'
+        ? 'The semantic service needs an update to support project weights. Showing structured scores using this project’s configured weights.'
+        : 'The semantic service is unavailable, so structured scores using this project’s configured weights are shown instead.',
       isFallback: true,
     }
   }
@@ -458,6 +463,7 @@ export async function rankProjectsForStudent(student, projects) {
     })
     if (!Array.isArray(payload?.results)) throw new Error('Matching service returned an invalid ranking.')
 
+    requireProjectWeightsSupport(payload, projects)
     const scores = new Map(payload.results.map((result) => [String(result.project_id), result]))
     const ranked = projects.map((project) => {
       const fallbackResult = localProjectStudentMatch(project, student)
@@ -474,8 +480,8 @@ export async function rankProjectsForStudent(student, projects) {
       }
 
       const eligibility = getProjectEligibility(project, student)
-      const isEligible = typeof result.eligible === 'boolean' ? result.eligible : eligibility.eligible
-      const eligibilityReason = result.eligibility_reason || eligibility.reason || ''
+      const isEligible = eligibility.eligible && result.eligible !== false
+      const eligibilityReason = eligibility.reason || result.eligibility_reason || ''
       const reasons = Array.isArray(result.reasons) ? result.reasons.filter(Boolean) : fallbackResult.match_reasons
       return {
         ...project,
@@ -496,7 +502,9 @@ export async function rankProjectsForStudent(student, projects) {
     console.warn('Semantic project matching is unavailable:', error.message)
     return {
       projects: fallback(),
-      notice: 'The local semantic service is unavailable, so the transparent structured score is shown instead.',
+      notice: error.code === 'PROJECT_WEIGHTS_UNSUPPORTED'
+        ? 'The semantic service needs an update to support project weights. Showing structured scores using each project’s configured weights.'
+        : 'The semantic service is unavailable, so structured scores using each project’s configured weights are shown instead.',
       isFallback: true,
     }
   }
