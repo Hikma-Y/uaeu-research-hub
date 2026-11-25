@@ -12,10 +12,98 @@ The active React application keeps Supabase authentication and the Supabase-conn
 4. Run `npm run dev`.
 5. Only if you are working on the preserved Express backend, run `npm install` inside `backend/` and create `backend/.env` from `backend/.env.example`.
 
+## Student and faculty self-registration
+
+Run `supabase/migrations/20261010_self_registration_consent.sql` in Supabase SQL
+Editor before using **Create an account** on the sign-in page. Enable email
+sign-ups and turn **Confirm email** off under Supabase Authentication >
+Sign In / Providers > Email, then save. Accounts should sign in immediately
+after registration without email confirmation. This is a hosted Supabase
+setting and cannot be disabled by the frontend. Add your frontend URL to the
+allowed redirect URLs. The form supports student and
+faculty accounts only, automatically assigns student accounts to emails starting with
+a digit and faculty accounts to emails starting with a letter. It requires a full
+UAEU email and a nine-digit university ID for students
+(faculty ID is optional), and
+blocks submission until research-background sharing consent is checked.
+The database rejects public account creation without consent and creates the
+profile in the same transaction, recording the consent time and version.
+Trusted administrator-created accounts retain their existing flow.
+If the hosted database has an existing `auth.users` profile-creation trigger,
+consolidate it with this migration's profile trigger before applying the migration
+to avoid inserting the same profile twice.
+
+Sharing consent applies within UAEU Research Hub for matching and collaboration.
+Account and profile data are stored in the configured Supabase project; running
+the frontend locally does not mean the database is stored on this computer.
+
 ## Security
 
+Run `supabase/migrations/20261011_require_complete_profiles.sql` to enforce
+profile completion before research interactions. Both roles require department,
+biography/research background, skills, and research interests. Students additionally
+require major, year of study, and GPA. Registration and browsing remain available;
+blocked actions direct users to My profile. Faculty IDs, documents, social links,
+and prior projects are not completion requirements. Rerun this migration if you
+install additional interaction tables from the existing SQL setup later.
+
 Real `.env` files are ignored and are not included in this merged package.
+
+## Matching
+
+For the matching setup and database migration, see `AI_MATCHING_SETUP.md`. It covers faculty-to-student rankings, student project recommendations, student faculty recommendations, idea-to-faculty recommendations, and the optional hard minimum-GPA rule.
+
+## Private project invitations
+
+After the existing project, messaging, and group-chat SQL setup, run
+`supabase/migrations/20261003_private_project_invitation_membership.sql` in the
+Supabase SQL Editor before using this frontend. Pending invitations expose private
+project details only to their recipients. Acceptance creates an accepted
+application, reserves one place, and joins any existing project group chat.
+Invitation and acceptance messages appear in the recipient's bell and open Projects.
+The dashboards refresh invitations, memberships, and remaining places every 12 seconds.
+
+The migration also repairs previously accepted invitations. If these exceed a
+project's capacity, it rolls back with an error naming the project; increase that
+project's capacity and rerun. The public opportunities view remains public only.
+
+Then run `supabase/migrations/20261003_faculty_remove_project_student.sql` to
+enable Remove beside registered students. Only the project owner can remove a
+registration. Removal frees the place and deletes that student's invitation and
+project group membership, revoking private-project access. Faculty can invite
+the student again later.
+
+## Student-to-faculty idea invitations
+
+After the research ideas and direct messaging SQL setup has been applied, run
+`supabase/migrations/20261004_research_idea_invite_tracking.sql` in the Supabase
+SQL Editor. It links messages sent from a student's saved idea to that idea, so
+the student can see which faculty have been invited and faculty can see the
+invitation in the Idea Portal. The migration validates that only the idea owner
+can create this association and that the recipient is a faculty member.
+
+Database regression tests use temporary PGlite databases, without live Supabase access:
+
+```powershell
+npm.cmd install --prefix "$env:TEMP/uaeu-invitation-db-tests" --no-audit --no-fund --ignore-scripts --package-lock=false @electric-sql/pglite
+$env:PGLITE_MODULE_PATH = Join-Path $env:TEMP 'uaeu-invitation-db-tests/node_modules/@electric-sql/pglite/dist/index.js'
+node --test supabase/tests/private_project_invitations.test.mjs
+```
 
 ---
 
 The original Login project README is preserved as `README.original.md`.
+
+## Admin registration and login persistence
+
+For administrator-created accounts, apply
+`supabase/migrations/20261116_admin_registration_authorizations.sql` before
+deploying `admin-create-user`. This replaces the older registration bypass:
+Supabase Auth inserts users before applying their app metadata, so the function
+now creates a short-lived server-only authorization for the exact user ID,
+email, and role. Public registration still requires consent. Do not reapply the
+older registration migrations afterward, since they replace the same triggers.
+
+The login checkbox selects persistent local storage when checked and tab session
+storage when unchecked. Existing persistent logins remain readable. Sign-out
+clears both locations. `npm test` includes the persistence regression tests.

@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Literal, Optional
 
 import numpy as np
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 SERVICE_DIRECTORY = Path(__file__).resolve().parents[1]
@@ -79,6 +79,32 @@ class ONNXSentenceTransformer:
 
 
 
+DEFAULT_MATCHING_WEIGHTS = {
+    "semantic": 40,
+    "skills": 25,
+    "academic": 10,
+    "gpa": 10,
+    "experience": 15,
+}
+Percentage = Annotated[int, Field(strict=True, ge=0, le=100)]
+
+
+class MatchingWeights(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    semantic: Percentage
+    skills: Percentage
+    academic: Percentage
+    gpa: Percentage
+    experience: Percentage
+
+    @model_validator(mode="after")
+    def validate_total(self) -> MatchingWeights:
+        if sum(self.model_dump().values()) != 100:
+            raise ValueError("Matching weights must sum to exactly 100")
+        return self
+
+
 class ProjectInput(BaseModel):
     title: str = ""
     description: str = ""
@@ -87,6 +113,14 @@ class ProjectInput(BaseModel):
     tags: list[str] = Field(default_factory=list)
     requirements: list[str] = Field(default_factory=list)
     minimum_gpa: Optional[float] = None
+    matching_weights: MatchingWeights = Field(
+        default_factory=lambda: MatchingWeights(**DEFAULT_MATCHING_WEIGHTS)
+    )
+
+    @field_validator("matching_weights", mode="before")
+    @classmethod
+    def default_null_weights(cls, value: Any) -> Any:
+        return DEFAULT_MATCHING_WEIGHTS.copy() if value is None else value
 
 
 class ProjectCandidate(ProjectInput):
@@ -184,12 +218,14 @@ class FacultyResult(BaseModel):
 
 
 class RankResponse(BaseModel):
+    project_weights_applied: Literal[True] = True
     engine: str
     trained: bool
     results: list[CandidateResult]
 
 
 class RankProjectsResponse(BaseModel):
+    project_weights_applied: Literal[True] = True
     engine: str
     trained: bool
     results: list[ProjectResult]
@@ -402,21 +438,37 @@ class SemanticMatcher:
         self.model = ONNXSentenceTransformer(model_identifier)
         self.engine = "Fine-tuned Sentence-BERT" if self.trained else "Pre-trained Sentence-BERT"
 
-    def score_pair(self, project: ProjectInput, student: StudentInput, similarity: float) -> dict[str, object]:
+    def score_pair(
+        self, project: ProjectInput, student: StudentInput, similarity: float
+    ) -> dict[str, object]:
         semantic_score = float(np.clip(similarity, 0.0, 1.0))
-        skill_score, major_score, gpa_score, experience_score, reasons = structured_scores(project, student)
+        skill_score, major_score, gpa_score, experience_score, reasons = (
+            structured_scores(project, student)
+        )
         eligible, eligibility_reason = gpa_eligibility(project, student)
+        weights = project.matching_weights
         final_score = round(
             100
             * (
-                semantic_score * 0.40
-                + skill_score * 0.25
-                + major_score * 0.10
-                + gpa_score * 0.10
-                + experience_score * 0.15
+                semantic_score * (weights.semantic / 100)
+                + skill_score * (weights.skills / 100)
+                + major_score * (weights.academic / 100)
+                + gpa_score * (weights.gpa / 100)
+                + experience_score * (weights.experience / 100)
             )
         )
-        if semantic_score >= 0.35:
+        reason_weights = {
+            "Major or department aligns": weights.academic,
+            "Strong GPA profile": weights.gpa,
+            "Relevant experience or coursework listed": weights.experience,
+        }
+        # The remaining structured reason is the variable skill-match count.
+        reasons = [
+            reason
+            for reason in reasons
+            if reason_weights.get(reason, weights.skills) > 0
+        ]
+        if weights.semantic > 0 and semantic_score >= 0.35:
             reasons.insert(0, "Research focus is semantically relevant")
         if not eligible and eligibility_reason:
             reasons.insert(0, eligibility_reason)
@@ -632,7 +684,12 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict[str, object]:
     active_matcher = get_matcher()
-    return {"status": "ok", "engine": active_matcher.engine, "trained": active_matcher.trained}
+    return {
+        "status": "ok",
+        "engine": active_matcher.engine,
+        "trained": active_matcher.trained,
+        "matching_weights_supported": True,
+    }
 
 
 @app.post("/api/match/rank", response_model=RankResponse)
